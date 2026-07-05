@@ -3,6 +3,7 @@ import { subDays, subHours } from 'date-fns';
 import { Box, Container, Unstable_Grid2 as Grid } from '@mui/material';
 import { Layout as DashboardLayout } from 'src/layouts/dashboard/layout';
 import { OverviewCoyote } from 'src/sections/overview/overview-coyote';
+import { OverviewSafeMode } from 'src/sections/overview/overview-safe-mode';
 import { OverviewVRC } from 'src/sections/overview/overview-vrc';
 
 const now = new Date();
@@ -32,6 +33,16 @@ const Page = () => (
             lg={3}
           >
             <OverviewCoyote
+              sx={{ height: '100%' }}
+            />
+          </Grid>
+
+          <Grid
+            xs={12}
+            sm={6}
+            lg={3}
+          >
+            <OverviewSafeMode
               sx={{ height: '100%' }}
             />
           </Grid>

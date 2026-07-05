@@ -114,12 +114,12 @@ class Settings(BaseModel):
     warn_on_stack_dump_sound: bool = True
 
     def dump(self):
-        with open(os.path.join(BASE_DIR, "settings.yaml"), "w") as f:
+        with open(os.path.join(USER_DATA_DIR, "settings.yaml"), "w") as f:
             yaml.dump(self.dict(), f)
 
     @classmethod
     def load(cls):
-        with open(os.path.join(BASE_DIR, "settings.yaml"), "r") as f:
+        with open(os.path.join(USER_DATA_DIR, "settings.yaml"), "r") as f:
             settings_dict = yaml.safe_load(f)
         return Settings(**settings_dict)
 
@@ -127,11 +127,11 @@ class Settings(BaseModel):
 import os
 import yaml
 
-from common.paths import BASE_DIR
+from common.paths import USER_DATA_DIR
 
 
 def load_settings():
-    with open(os.path.join(BASE_DIR, "settings.yaml"), "r") as f:
+    with open(os.path.join(USER_DATA_DIR, "settings.yaml"), "r") as f:
         settings_dict = yaml.safe_load(f)
     return Settings(**settings_dict)
 

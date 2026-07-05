@@ -234,6 +234,46 @@ async def update_max_power(req: UpdatePowerRequest):
         )
 
 
+class UpdateSafeModeRequest(BaseModel):
+    safe_mode: bool
+
+
+@router.get("/safe_mode")
+async def get_safe_mode():
+    """
+    获取安全模式状态。
+    安全模式启用时，设备最大输出强度被限制为 100（约 50%），避免误操作造成不适。
+    """
+    try:
+        return {
+            "safe_mode": settings.coyote_safe_mode,
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.post("/safe_mode")
+async def update_safe_mode(req: UpdateSafeModeRequest):
+    """
+    设置安全模式状态。
+    启用安全模式后，A/B 通道最大强度上限被限制为 100；关闭后允许到 200。
+    警告：关闭安全模式后设备可输出全功率，请确保了解风险。
+    """
+    try:
+        settings.coyote_safe_mode = req.safe_mode
+        # 同步到当前已创建的 CoyoteInterface 实例
+        if ci is not None:
+            ci.safe_mode = req.safe_mode
+        settings.dump()
+        return {"msg": "success", "safe_mode": settings.coyote_safe_mode}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
 @router.get("/max_power")
 async def get_max_power():
     """

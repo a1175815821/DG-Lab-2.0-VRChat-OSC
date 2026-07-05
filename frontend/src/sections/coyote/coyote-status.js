@@ -39,11 +39,17 @@ export const CoyoteStats = () => {
   const [openSuccess, setOpenSuccess] = useState(false);
   const [openError, setOpenError] = useState(false);
   const [message, setMessage] = useState('');
+  // 记录最近一次动作（'start' / 'stop'），用于显示对应的成功提示文案
+  const [actionType, setActionType] = useState('start');
 
   const getStatus = () => {
     axios.get('/api/coyote/status').then((res) => {
       setBattery(res.data.battery_level);
       setConnected(res.data.is_connected);
+      // 设备已断开时清空电量显示，避免残留旧数据
+      if (!res.data.is_connected) {
+        setBattery(0);
+      }
       if (firstPoll) {
         setWantedStatus(res.data.is_connected);
         setFirstPoll(false);
@@ -63,6 +69,7 @@ export const CoyoteStats = () => {
 
   const startDevice = () => {
     const data = { "uid": uid };
+    setActionType('start');
     axios.post('/api/coyote/start', data).then((res) => {
       setOpenSuccess(true);
     }).catch((err) => {
@@ -73,8 +80,13 @@ export const CoyoteStats = () => {
   }
 
   const stopDevice = () => {
+    setActionType('stop');
     axios.get('/api/coyote/stop').then((res) => {
       setOpenSuccess(true);
+      // 停止成功后立即清空电量显示
+      setBattery(0);
+      setConnected(false);
+      setWantedStatus(false);
     }).catch((err) => {
       console.error(err);
       setMessage(err.response?.data?.detail || String(err));
@@ -219,7 +231,7 @@ export const CoyoteStats = () => {
                 <Alert onClose={handleCloseSuccess}
                   severity="success"
                   sx={{ width: '100%' }}>
-                  启动 Coyote 成功！
+                  {actionType === 'start' ? '启动 Coyote 成功！' : '已停止 Coyote'}
                 </Alert>
               </Snackbar>
               <Snackbar open={openError}
@@ -229,7 +241,7 @@ export const CoyoteStats = () => {
                 <Alert onClose={handleCloseError}
                   severity="error"
                   sx={{ width: '100%' }}>
-                  启动 Coyote 失败：{message}
+                  {actionType === 'start' ? '启动 Coyote 失败' : '停止 Coyote 失败'}：{message}
                 </Alert>
               </Snackbar>
             </Stack>

@@ -119,7 +119,18 @@ class Settings(BaseModel):
 
     @classmethod
     def load(cls):
-        with open(os.path.join(USER_DATA_DIR, "settings.yaml"), "r") as f:
+        user_yaml = os.path.join(USER_DATA_DIR, "settings.yaml")
+        # 打包模式下首次运行：USER_DATA_DIR（exe 同目录）还没有 settings.yaml，
+        # 从打包内置的只读副本（BASE_DIR）复制一份到外部，便于用户后续修改持久化。
+        if not os.path.exists(user_yaml):
+            builtin_yaml = os.path.join(BASE_DIR, "settings.yaml")
+            if os.path.exists(builtin_yaml):
+                import shutil
+                try:
+                    shutil.copyfile(builtin_yaml, user_yaml)
+                except Exception as e:
+                    print(f"[settings] 复制内置 settings.yaml 失败: {e}")
+        with open(user_yaml, "r") as f:
             settings_dict = yaml.safe_load(f)
         return Settings(**settings_dict)
 
@@ -127,11 +138,20 @@ class Settings(BaseModel):
 import os
 import yaml
 
-from common.paths import USER_DATA_DIR
+from common.paths import BASE_DIR, USER_DATA_DIR
 
 
 def load_settings():
-    with open(os.path.join(USER_DATA_DIR, "settings.yaml"), "r") as f:
+    user_yaml = os.path.join(USER_DATA_DIR, "settings.yaml")
+    if not os.path.exists(user_yaml):
+        builtin_yaml = os.path.join(BASE_DIR, "settings.yaml")
+        if os.path.exists(builtin_yaml):
+            import shutil
+            try:
+                shutil.copyfile(builtin_yaml, user_yaml)
+            except Exception as e:
+                print(f"[settings] 复制内置 settings.yaml 失败: {e}")
+    with open(user_yaml, "r") as f:
         settings_dict = yaml.safe_load(f)
     return Settings(**settings_dict)
 

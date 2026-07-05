@@ -21,7 +21,7 @@ import { Logo } from 'src/components/logo';
 import { Scrollbar } from 'src/components/scrollbar';
 import { items } from './config';
 import { SideNavItem } from './side-nav-item';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import GitHubIcon from '@mui/icons-material/GitHub';
 import StarBorderRoundedIcon from '@mui/icons-material/StarBorderRounded';
 import CallSplitRoundedIcon from '@mui/icons-material/CallSplitRounded';
@@ -47,31 +47,52 @@ export const SideNav = (props) => {
   const [aActive, setAActive] = useState(false);
   const [bActive, setBActive] = useState(false);
 
+  // 后端连接错误提示
+  const [serverError, setServerError] = useState(false);
+  const failCountRef = useRef(0);
+
+  // GitHub 统计：带 localStorage 缓存 + 降级显示
   const getGithubStats = () => {
-    axios.get('https://api.github.com/repos/a1175815821/DG-Lab-2.0-VRChat-OSC').then((res) => {
+    axios.get('https://api.github.com/repos/a1175815821/DG-Lab-2.0-VRChat-OSC', { timeout: 5000 }).then((res) => {
       setStars(res.data.stargazers_count);
       setForks(res.data.forks_count);
+      // 缓存到 localStorage
+      try {
+        localStorage.setItem('github_stats', JSON.stringify({
+          stars: res.data.stargazers_count,
+          forks: res.data.forks_count,
+          ts: Date.now()
+        }));
+      } catch (e) {}
     }).catch((err) => {
       console.error(err);
+      // 降级：从 localStorage 读取缓存数据
+      try {
+        const cached = JSON.parse(localStorage.getItem('github_stats') || '{}');
+        if (cached.stars !== undefined) {
+          setStars(cached.stars);
+          setForks(cached.forks);
+        }
+      } catch (e) {}
     });
   }
 
-  const getMaxPower = () => {
-    axios.get('/api/coyote/max_power').then((res) => {
-      setMaxPowerA(res.data.pow_a);
-      setMaxPowerB(res.data.pow_b);
-    }).catch((err) => {
-      console.error(err);
-    });
-  };
-
-  const getOscStatus = () => {
-    axios.get('/api/coyote/osc_status').then((res) => {
+  // 聚合状态接口：一次请求获取 OSC 状态 + 强度 + 设备状态，替代多个独立轮询
+  const getAggregateStatus = () => {
+    axios.get('/api/coyote/aggregate_status').then((res) => {
       setOscRunning(!!res.data.osc_running);
       setAActive(!!res.data.a_active);
       setBActive(!!res.data.b_active);
+      setMaxPowerA(res.data.max_power_a);
+      setMaxPowerB(res.data.max_power_b);
+      failCountRef.current = 0;
+      setServerError(false);
     }).catch((err) => {
       console.error(err);
+      failCountRef.current += 1;
+      if (failCountRef.current >= 3) {
+        setServerError(true);
+      }
     });
   };
 
@@ -90,10 +111,9 @@ export const SideNav = (props) => {
 
   useEffect(() => {
     getGithubStats();
-    getMaxPower();
-    getOscStatus();
-    // 每 1.5 秒刷新 OSC 状态
-    const id = setInterval(getOscStatus, 1500);
+    getAggregateStatus();
+    // 每 2 秒刷新聚合状态
+    const id = setInterval(getAggregateStatus, 2000);
     return () => clearInterval(id);
   }, []);
 

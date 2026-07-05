@@ -1,3 +1,7 @@
+import os
+
+from common.paths import BASE_DIR
+
 TOY_LOVENSE = "Lovense"
 TOY_BUTTPLUG = "Buttplug.io"
 TOY_COYOTE = "DG-Lab Coyote"
@@ -23,5 +27,5 @@ GUI_CONFIG_EXIT = "Cancel"
 GUI_CONFIG_ENABLE_ALL = "Enable All"
 GUI_CONFIG_DISABLE_ALL = "Disable All"
 
-EVENTS_PATH = "data/events"
-EVENTS_YAML = EVENTS_PATH + "/events.yaml"
+EVENTS_PATH = os.path.join(BASE_DIR, "data/events")
+EVENTS_YAML = os.path.join(BASE_DIR, "data/events/events.yaml")

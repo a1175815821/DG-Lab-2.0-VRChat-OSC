@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
-from routers.coyote import ci
+from routers.coyote import ci, serve_osc
 from settings import settings
 
 
@@ -15,19 +15,16 @@ class OSCAddress(BaseModel):
 @router.post("/address")
 async def update_address(req: OSCAddress):
     """
-    设置 VRChat OSC 监听地址。
-    设备已连接时不允许修改，需先断开。
+    设置 VRChat OSC 监听地址并热重启 OSC 服务。
+    无需断开 Coyote 设备，OSC 监听会自动重启应用新地址。
     """
-    if ci.is_connected:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="设备已连接，无法修改地址，请先断开设备。",
-        )
     try:
         settings.vrc_host = req.host
         settings.vrc_osc_port = req.port
-        # 持久化到 settings.yaml，避免重启后丢失
+        # 持久化到 settings.yaml
         settings.dump()
+        # 热重启 OSC 服务以应用新地址
+        await serve_osc()
         return {"msg": "success"}
     except Exception as e:
         raise HTTPException(

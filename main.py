@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import multiprocessing
 import os
@@ -20,6 +21,9 @@ app.mount("/", StaticFiles(directory=os.path.join(BASE_DIR, "frontend", "out"), 
 @app.on_event("startup")
 async def app_startup():
     logging.basicConfig(level=logging.INFO)
+    # 应用启动时即启动 OSC 监听服务，独立于 Coyote 设备连接
+    # 用户无需连接设备即可测试 VRChat OSC 信号是否正常
+    asyncio.create_task(coyote.serve_osc())
 
 
 @app.on_event("shutdown")

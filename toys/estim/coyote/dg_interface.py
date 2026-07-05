@@ -65,6 +65,11 @@ from common.util import *
 from settings import settings
 import copy
 
+# can_update_power 超时兜底：记录 set_pwm 设置 can_update_power=False 的时间
+# coyote.py 的 _check_power_lock_timeout 会读取此变量判断是否超时
+_can_update_power_set_time: float = 0.0
+_POWER_LOCK_TIMEOUT = 5.0  # 秒
+
 
 class CoyoteInterface(Estim):
     """
@@ -191,8 +196,8 @@ class CoyoteInterface(Estim):
         if pow_b < 0:
             pow_b = self.pow_b
 
-        # 强度范围 0-200，变化阈值缩小为 2 以保证平滑
-        if abs(pow_a - self.pow_a) < 2 and abs(pow_b - self.pow_b) < 2:
+        # 强度范围 0-200，变化阈值 1 保证精细调节
+        if abs(pow_a - self.pow_a) < 1 and abs(pow_b - self.pow_b) < 1:
             return
 
         logging.info(f"set_pwm({pow_a}, {pow_b})")
@@ -200,6 +205,9 @@ class CoyoteInterface(Estim):
         self.pow_b = pow_b
 
         settings.can_update_power = False
+        # 记录锁定时间，用于超时兜底
+        global _can_update_power_set_time
+        _can_update_power_set_time = time.time()
 
         # safe_mode 启用时限制最大强度为 100（约 50%），否则允许到 200
         if self.safe_mode:

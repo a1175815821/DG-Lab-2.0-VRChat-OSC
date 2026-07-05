@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   Alert,
@@ -20,6 +20,26 @@ import {
 } from '@mui/material';
 import { PatternPreview } from 'src/components/pattern-preview';
 
+// Pattern 中文名映射表：技术命名 → 中文友好名称
+const PATTERN_NAME_MAP = {
+  vibrator_1: '震动·轻柔',
+  vibrator_2: '震动·中等',
+  vibrator_3: '震动·强烈',
+  vibrator_4: '震动·快速',
+  pulse_1: '脉冲·短促',
+  pulse_2: '脉冲·中等',
+  pulse_3: '脉冲·强烈',
+  breathing_1: '呼吸·轻柔',
+  breathing_2: '呼吸·深沉',
+  wave_1: '波浪·平缓',
+  wave_2: '波浪·激烈',
+  squeeze: '挤压',
+  random: '随机',
+  default: '默认',
+};
+
+const getPatternDisplayName = (name) => PATTERN_NAME_MAP[name] || name;
+
 export const CoyotePattern = () => {
   const [patternList, setPatternList] = useState([]);
   const [patternDetails, setPatternDetails] = useState({});
@@ -29,6 +49,22 @@ export const CoyotePattern = () => {
   const [openSuccess, setOpenSuccess] = useState(false);
   const [openError, setOpenError] = useState(false);
   const [message, setMessage] = useState('');
+  const [showPollingError, setShowPollingError] = useState(false);
+  const failCountRef = useRef(0);
+
+  // 轮询请求成功时重置失败计数并隐藏告警
+  const handlePollingSuccess = useCallback(() => {
+    failCountRef.current = 0;
+    setShowPollingError(false);
+  }, []);
+
+  // 轮询请求失败时累计失败次数，连续 3 次以上显示告警
+  const handlePollingError = useCallback(() => {
+    failCountRef.current += 1;
+    if (failCountRef.current >= 3) {
+      setShowPollingError(true);
+    }
+  }, []);
 
   const updatePattern = () => {
     const data = { "pattern_a": patternA, "pattern_b": patternB };
@@ -44,33 +80,41 @@ export const CoyotePattern = () => {
   const getPatternList = () => {
     axios.get('/api/coyote/patterns').then((res) => {
       setPatternList(res.data.patterns);
+      handlePollingSuccess();
     }).catch((err) => {
       console.error(err);
+      handlePollingError();
     });
   }
 
   const getPatternDetails = useCallback(() => {
     axios.get('/api/coyote/patterns/detail').then((res) => {
       setPatternDetails(res.data.patterns || {});
+      handlePollingSuccess();
     }).catch((err) => {
       console.error(err);
+      handlePollingError();
     });
-  }, []);
+  }, [handlePollingSuccess, handlePollingError]);
 
   const getPattern = () => {
     axios.get('/api/coyote/pattern').then((res) => {
       setPatternA(res.data.pattern_a);
       setPatternB(res.data.pattern_b);
+      handlePollingSuccess();
     }).catch((err) => {
       console.error(err);
+      handlePollingError();
     });
   }
 
   const getStatus = () => {
     axios.get('/api/coyote/status').then((res) => {
       setConnected(!!res.data.is_connected);
+      handlePollingSuccess();
     }).catch((err) => {
       console.error(err);
+      handlePollingError();
     });
   }
 
@@ -117,6 +161,11 @@ export const CoyotePattern = () => {
       />
       <Divider />
       <CardContent>
+        {showPollingError && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            无法获取数据，请检查后端服务
+          </Alert>
+        )}
         <Grid container spacing={6} wrap="wrap">
           <Grid xs={12} sm={6} md={6}>
             <Stack spacing={2}>
@@ -131,7 +180,7 @@ export const CoyotePattern = () => {
                 >
                   {patternList.map((pattern) => (
                     <MenuItem value={pattern} key={"PatternA" + pattern}>
-                      {pattern}
+                      {getPatternDisplayName(pattern)}
                     </MenuItem>
                   ))}
                 </Select>
@@ -158,7 +207,7 @@ export const CoyotePattern = () => {
                 >
                   {patternList.map((pattern) => (
                     <MenuItem value={pattern} key={"PatternB" + pattern}>
-                      {pattern}
+                      {getPatternDisplayName(pattern)}
                     </MenuItem>
                   ))}
                 </Select>

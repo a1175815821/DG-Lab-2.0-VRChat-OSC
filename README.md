@@ -22,7 +22,6 @@
 
 - [项目简介](#项目简介)
 - [主要特性](#主要特性)
-- [屏幕截图](#屏幕截图)
 - [快速开始](#快速开始)
 - [配置说明](#配置说明)
 - [架构说明](#架构说明)
@@ -79,13 +78,6 @@ VRChat 会在 `%LOCALAPPDATA%\Low\VRChat\VRChat\OSC\` 下为每个 avatar 生成
 - 侧边栏背景色随主题切换（浅色 `#1C2536`，深色 `#0B1220`）
 - 顶栏增加分隔线，毛玻璃背景透明度调整
 
-## 屏幕截图
-
-![page_overview](images/page_overview.png)
-
-![page_coyote](images/page_coyote.png)
-
-> 截图为上游版本界面。深浅色切换、波形预览、Auto Fetch 弹窗等新功能建议直接运行查看。
 
 ## 快速开始
 

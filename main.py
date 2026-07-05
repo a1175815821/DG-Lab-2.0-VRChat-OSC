@@ -1,5 +1,6 @@
 import logging
 import multiprocessing
+import os
 import uvicorn
 from settings import Settings, settings
 from pythonosc import osc_server
@@ -45,7 +46,19 @@ def run_webview():
     webview.start(http_port=38080)
 
 
-if __name__ == "__main__":
-    process = multiprocessing.Process(target=run_webview)
-    process.start()
+def run_uvicorn():
     uvicorn.run(app, port=38080)
+
+
+if __name__ == "__main__":
+    # Windows 下 Nuitka 打包后 multiprocessing 需要 freeze_support
+    multiprocessing.freeze_support()
+    # uvicorn 作为 daemon 子进程运行，主进程退出时自动终止
+    uvicorn_process = multiprocessing.Process(target=run_uvicorn, daemon=True)
+    uvicorn_process.start()
+    try:
+        # 主进程运行 webview，窗口关闭后 run_webview 返回
+        run_webview()
+    finally:
+        # 强制退出整个进程树，避免 uvicorn 后台残留导致 cmd 不关闭
+        os._exit(0)

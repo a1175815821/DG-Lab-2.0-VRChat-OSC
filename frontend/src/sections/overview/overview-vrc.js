@@ -33,7 +33,7 @@ export const OverviewVRC = () => {
       setOpenSuccess(true);
     }).catch((err) => {
       console.error(err);
-      setMessage(err.response.data.detail);
+      setMessage(err.response?.data?.detail || String(err));
       setOpenError(true);
     });
   };

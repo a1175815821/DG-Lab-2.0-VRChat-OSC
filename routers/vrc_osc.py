@@ -1,4 +1,4 @@
-"""
+r"""
 读取 VRChat 在本地生成的 OSC 配置文件，用于自动获取可用参数列表。
 
 VRC 启动时会在 `%LOCALAPPDATA%Low\VRChat\VRChat\OSC\` 下为每个用户与 avatar 生成 json：

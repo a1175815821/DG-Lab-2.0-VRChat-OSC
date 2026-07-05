@@ -36,7 +36,7 @@ export const SideNav = (props) => {
   const [forks, setForks] = useState(0);
 
   const getGithubStats = () => {
-    axios.get('https://api.github.com/repos/Sakura0721/osc-toys').then((res) => {
+    axios.get('https://api.github.com/repos/a1175815821/DG-Lab-2.0-VRChat-OSC').then((res) => {
       setStars(res.data.stargazers_count);
       setForks(res.data.forks_count);
     }).catch((err) => {
@@ -169,7 +169,7 @@ export const SideNav = (props) => {
                 <Box
                   component={NextLink}
                   target="_blank"
-                  href="https://github.com/Sakura0721/osc-toys"
+                  href="https://github.com/a1175815821/DG-Lab-2.0-VRChat-OSC"
                   sx={{ mt: 1, color: 'common.white' }}
                 >
                   <GitHubIcon sx={{ fontSize: 40 }} />
@@ -214,7 +214,7 @@ export const SideNav = (props) => {
               </SvgIcon>
             )}
             fullWidth
-            href="https://github.com/Sakura0721/osc-toys"
+            href="https://github.com/a1175815821/DG-Lab-2.0-VRChat-OSC"
             sx={{ mt: 2 }}
             target="_blank"
             variant="contained"

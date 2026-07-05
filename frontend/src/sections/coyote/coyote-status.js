@@ -28,7 +28,6 @@ import BluetoothConnectedIcon from '@mui/icons-material/BluetoothConnected';
 
 import { red, orange, green } from '@mui/material/colors';
 import { useEffect } from 'react';
-import { set } from 'nprogress';
 
 export const CoyoteStats = () => {
   const [uid, setUid] = useState('');
@@ -68,7 +67,7 @@ export const CoyoteStats = () => {
       setOpenSuccess(true);
     }).catch((err) => {
       console.error(err);
-      setMessage(err.response.data.detail);
+      setMessage(err.response?.data?.detail || String(err));
       setOpenError(true);
     });
   }
@@ -78,7 +77,7 @@ export const CoyoteStats = () => {
       setOpenSuccess(true);
     }).catch((err) => {
       console.error(err);
-      setMessage(err.response.data.detail);
+      setMessage(err.response?.data?.detail || String(err));
       setOpenError(true);
     });
   }

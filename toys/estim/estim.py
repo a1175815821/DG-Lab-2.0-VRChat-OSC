@@ -2,20 +2,22 @@ from typing import Dict, Any
 from toys.base import Toy, FEATURE_ESTIM
 import json
 import io
+import os
 import random
 from common.util import *
+from common.paths import BASE_DIR
 
 
 class Estim(Toy):
     patterns: Dict[str, Any]
 
     def load_patterns(self):
-        with open("data/estim/pattern_dict.json") as pf:
+        with open(os.path.join(BASE_DIR, "data/estim/pattern_dict.json")) as pf:
             patterns = json.loads(pf.read())
             for k, v in patterns.items():
                 pattern_list = []
                 for pattern in v:
-                    with open("data/estim/patterns/{}".format(pattern)) as psf:
+                    with open(os.path.join(BASE_DIR, "data/estim/patterns/{}".format(pattern))) as psf:
                         pattern_list.extend(json.loads(psf.read()))
                 patterns[k] = pattern_list
         patterns["default"] = [

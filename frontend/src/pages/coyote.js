@@ -2,7 +2,6 @@ import Head from 'next/head';
 import { Box, Container, Stack, Typography } from '@mui/material';
 import { CoyoteStats } from 'src/sections/coyote/coyote-status';
 import { CoyoteOSCAddress } from 'src/sections/coyote/coyote-address';
-import { CoyoteMaxPower } from 'src/sections/coyote/coyote-power';
 import { CoyotePattern } from 'src/sections/coyote/coyote-pattern';
 import { Layout as DashboardLayout } from 'src/layouts/dashboard/layout';
 
@@ -27,7 +26,6 @@ const Page = () => (
           </Typography>
           <CoyoteStats />
           <CoyoteOSCAddress />
-          <CoyoteMaxPower />
           <CoyotePattern />
         </Stack>
       </Container>

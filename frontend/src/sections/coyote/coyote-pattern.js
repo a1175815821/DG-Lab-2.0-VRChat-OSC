@@ -94,18 +94,26 @@ export const CoyotePattern = () => {
     return () => clearInterval(id);
   }, []);
 
-  // 当前选中的 pattern 取首个变体（patterns 是 [[...]] 列表的列表）
+  // 当前选中的 pattern 取首个变体。
+  // patterns 数据结构有两种：
+  //   - list of states: [[pulse, pause, amp], ...]（普通 pattern，由 estim.py extend 拼接）
+  //   - list of variants: [[[pulse, pause, amp], ...], ...]（default pattern）
+  // 通过判断 variants[0][0] 是否为 array 来区分
   const getFirstVariant = (name) => {
     const variants = patternDetails[name];
     if (!variants || variants.length === 0) return [];
-    return Array.isArray(variants[0]) ? variants[0] : variants;
+    const first = variants[0];
+    if (!Array.isArray(first)) return [];
+    // first 是 state [pulse, pause, amp] → variants 是 list of states，直接返回
+    // first 是 variant [[pulse, pause, amp], ...] → variants 是 list of variants，返回 first
+    return Array.isArray(first[0]) ? first : variants;
   };
 
   return (
     <Card>
       <CardHeader
         subheader="管理 Coyote 的输出波形。下方实时预览当前选中的波形。"
-        title="Patterns"
+        title="波形"
       />
       <Divider />
       <CardContent>
@@ -113,7 +121,7 @@ export const CoyotePattern = () => {
           <Grid xs={12} sm={6} md={6}>
             <Stack spacing={2}>
               <FormControl fullWidth variant="standard">
-                <InputLabel id="pattern-a-select-label">Pattern A</InputLabel>
+                <InputLabel id="pattern-a-select-label">A 通道波形</InputLabel>
                 <Select
                   labelId="pattern-a-select-label"
                   id="pattern-a-select"
@@ -129,7 +137,7 @@ export const CoyotePattern = () => {
                 </Select>
               </FormControl>
               <Box>
-                <Typography variant="subtitle2" sx={{ mb: 1 }}>Pattern A 预览</Typography>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>A 通道预览</Typography>
                 <PatternPreview
                   pattern={getFirstVariant(patternA)}
                   playing={connected}
@@ -140,7 +148,7 @@ export const CoyotePattern = () => {
           <Grid item xs={12} sm={6} md={6}>
             <Stack spacing={2}>
               <FormControl fullWidth variant="standard">
-                <InputLabel id="pattern-b-select-label">Pattern B</InputLabel>
+                <InputLabel id="pattern-b-select-label">B 通道波形</InputLabel>
                 <Select
                   labelId="pattern-b-select-label"
                   id="pattern-b-select"
@@ -156,7 +164,7 @@ export const CoyotePattern = () => {
                 </Select>
               </FormControl>
               <Box>
-                <Typography variant="subtitle2" sx={{ mb: 1 }}>Pattern B 预览</Typography>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>B 通道预览</Typography>
                 <PatternPreview
                   pattern={getFirstVariant(patternB)}
                   playing={connected}
@@ -173,7 +181,7 @@ export const CoyotePattern = () => {
           variant="contained"
           onClick={() => updatePattern()}
         >
-          Save
+          保存
         </Button>
         <Snackbar
           open={openSuccess}
@@ -182,7 +190,7 @@ export const CoyotePattern = () => {
           onClose={handleCloseSuccess}
         >
           <Alert onClose={handleCloseSuccess} severity="success" sx={{ width: '100%' }}>
-            updated pattern successfully!
+            波形更新成功！
           </Alert>
         </Snackbar>
         <Snackbar
@@ -192,7 +200,7 @@ export const CoyotePattern = () => {
           onClose={handleCloseError}
         >
           <Alert onClose={handleCloseError} severity="error" sx={{ width: '100%' }}>
-            failed to update pattern: {message}
+            波形更新失败：{message}
           </Alert>
         </Snackbar>
       </CardActions>

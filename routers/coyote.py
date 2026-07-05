@@ -58,9 +58,9 @@ async def serve_osc():
 param_queue_a = []
 param_queue_b = []
 last_time_a = time.time()
-cur_time_a = time.time()
+cur_time_a = None
 last_time_b = time.time()
-cur_time_b = time.time()
+cur_time_b = None
 
 
 def get_avg(queue: List[float]) -> float:
@@ -401,6 +401,32 @@ async def get_status():
                 "battery_level": 0,
                 "uid": "",
             }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.get("/osc_status")
+async def get_osc_status():
+    """
+    获取 OSC 链接状态。
+    - osc_running: OSC 服务是否已启动（transport 存在）
+    - a_active / b_active: A/B 通道是否在最近 2 秒内收到过信号
+    - a_last_signal / b_last_signal: 最近一次收到信号的时间戳（秒级，未收到过为 null）
+    """
+    try:
+        now = time.time()
+        # 2 秒内收到信号视为活跃
+        a_active = cur_time_a is not None and (now - cur_time_a) < 2.0
+        b_active = cur_time_b is not None and (now - cur_time_b) < 2.0
+        return {
+            "osc_running": transport is not None,
+            "a_active": a_active,
+            "b_active": b_active,
+            "a_last_signal": cur_time_a,
+            "b_last_signal": cur_time_b,
+        }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)

@@ -96,7 +96,7 @@ export const OverviewCoyote = (props) => {
               color={connected ? 'success.main' : 'error.main'}
               variant="body2"
             >
-              {connected ? 'Connected' : 'Disconnected'}
+              {connected ? '已连接' : '未连接'}
             </Typography>
           </Stack>
         </Stack>

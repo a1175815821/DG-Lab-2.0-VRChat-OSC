@@ -57,7 +57,7 @@ const Fonts = () => (
 class CustomDocument extends Document {
   render() {
     return (
-      <Html lang="en">
+      <Html lang="zh-CN">
         <Head>
           <Favicon />
           <Fonts />

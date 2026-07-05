@@ -3,7 +3,7 @@ import SignalCellularAltRoundedIcon from '@mui/icons-material/SignalCellularAltR
 
 export const items = [
   {
-    title: 'Overview',
+    title: '总览',
     path: '/',
     icon: (
       <SignalCellularAltRoundedIcon />

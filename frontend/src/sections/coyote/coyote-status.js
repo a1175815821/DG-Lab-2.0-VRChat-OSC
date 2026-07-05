@@ -106,8 +106,8 @@ export const CoyoteStats = () => {
   return (
     <Card>
       <CardHeader
-        subheader="Working status of Coyote"
-        title="Coyote Status"
+        subheader="Coyote 设备的工作状态"
+        title="Coyote 状态"
       />
       <Divider />
       <CardContent>
@@ -130,7 +130,7 @@ export const CoyoteStats = () => {
               variant="standard"
               value={uid}
               sx={{ ml: 1, width: '100%' }}
-              helperText="Leave it blank to auto-detect"
+              helperText="留空将自动检测设备"
               onChange={(evt) => {
                 setUid(evt.target.value);
               }} />
@@ -156,7 +156,7 @@ export const CoyoteStats = () => {
                   {battery > 60 && battery <= 80 && <Battery80Icon sx={{ color: green[500] }} />}
                   {battery > 80 && battery <= 90 && <Battery90Icon sx={{ color: green[500] }} />}
                   {battery > 90 && <BatteryFullIcon sx={{ color: green[500] }} />}
-                  Battery:
+                  电量：
                   {battery}%
                 </div>
               </Typography>
@@ -182,7 +182,7 @@ export const CoyoteStats = () => {
                   <Typography
                     color={connected ? 'success.main' : 'error.main'}
                   >
-                    {connected ? 'Connected' : 'Disconnected'}
+                    {connected ? '已连接' : '未连接'}
                   </Typography>
                 </div>
               </Typography>
@@ -210,7 +210,7 @@ export const CoyoteStats = () => {
                   }
                 }}
               >
-                {connected != wantedStatus ? ('Waiting') : (connected ? 'Disconnect and Stop' : 'Connect and Start')}
+                {connected != wantedStatus ? ('等待中') : (connected ? '断开并停止' : '连接并启动')}
               </Button>
               <Snackbar open={openSuccess}
                 anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
@@ -219,7 +219,7 @@ export const CoyoteStats = () => {
                 <Alert onClose={handleCloseSuccess}
                   severity="success"
                   sx={{ width: '100%' }}>
-                  start coyote successfully!
+                  启动 Coyote 成功！
                 </Alert>
               </Snackbar>
               <Snackbar open={openError}
@@ -229,7 +229,7 @@ export const CoyoteStats = () => {
                 <Alert onClose={handleCloseError}
                   severity="error"
                   sx={{ width: '100%' }}>
-                  failed to start coyote: {message}
+                  启动 Coyote 失败：{message}
                 </Alert>
               </Snackbar>
             </Stack>

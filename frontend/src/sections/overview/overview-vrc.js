@@ -69,8 +69,8 @@ export const OverviewVRC = () => {
   return (
     <Card>
       <CardHeader
-        subheader="The VRChat OSC host and port to listen"
-        title="VRChat Address"
+        subheader="监听的 VRChat OSC 主机和端口"
+        title="VRChat 地址"
       />
       <Divider />
       <CardContent>
@@ -86,11 +86,11 @@ export const OverviewVRC = () => {
           >
             <Stack spacing={1}>
               <Typography variant="h6">
-                VRChat Host
+                VRChat 主机
               </Typography>
               <Stack>
                 <TextField
-                  label="Host"
+                  label="主机"
                   variant="standard"
                   value={vrcHost}
                   onChange={(evt) => {
@@ -107,11 +107,11 @@ export const OverviewVRC = () => {
           >
             <Stack spacing={1}>
               <Typography variant="h6">
-                VRChat OSC Port
+                VRChat OSC 端口
               </Typography>
               <Stack>
                 <TextField
-                  label="Port"
+                  label="端口"
                   variant="standard"
                   value={vrcPort}
                   onChange={(evt) => {
@@ -131,7 +131,7 @@ export const OverviewVRC = () => {
             updateOscAddress();
           }}
         >
-          Save
+          保存
         </Button>
         <Snackbar open={openSuccess}
           anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
@@ -140,7 +140,7 @@ export const OverviewVRC = () => {
           <Alert onClose={handleCloseSuccess}
             severity="success"
             sx={{ width: '100%' }}>
-              updated VRC address successfully!
+              VRC 地址更新成功！
           </Alert>
         </Snackbar>
         <Snackbar open={openError}
@@ -150,7 +150,7 @@ export const OverviewVRC = () => {
           <Alert onClose={handleCloseError}
             severity="error"
             sx={{ width: '100%' }}>
-              failed to update VRC address: {message}
+              VRC 地址更新失败：{message}
           </Alert>
         </Snackbar>
       </CardActions>

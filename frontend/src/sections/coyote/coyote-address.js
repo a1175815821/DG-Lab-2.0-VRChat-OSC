@@ -110,19 +110,19 @@ export const CoyoteOSCAddress = () => {
   return (
     <Card>
       <CardHeader
-        subheader="管理 VRChat 参数的 OSC 地址。可手动填写，或点击 Auto Fetch 从 VRC 本地配置自动读取。"
-        title="OSC Addresses"
+        subheader="管理 VRChat 参数的 OSC 地址。可手动填写，或点击“自动获取”从 VRC 本地配置读取。"
+        title="OSC 地址"
       />
       <Divider />
       <CardContent>
         <Grid container spacing={6} wrap="wrap">
           <Grid xs={12} sm={6} md={6}>
             <Stack spacing={1}>
-              <Typography variant="h6">OSC Address A</Typography>
+              <Typography variant="h6">A 通道 OSC 地址</Typography>
               <Stack direction="row" spacing={1} alignItems="center">
                 <TextField
                   id="osc-addr-a"
-                  label="Address Name"
+                  label="地址名称"
                   variant="standard"
                   fullWidth
                   value={oscAddressA}
@@ -134,18 +134,18 @@ export const CoyoteOSCAddress = () => {
                   startIcon={<AutoFixHighIcon />}
                   onClick={() => openPicker('a')}
                 >
-                  Auto Fetch
+                  自动获取
                 </Button>
               </Stack>
             </Stack>
           </Grid>
           <Grid item xs={12} sm={6} md={6}>
             <Stack spacing={1}>
-              <Typography variant="h6">OSC Address B</Typography>
+              <Typography variant="h6">B 通道 OSC 地址</Typography>
               <Stack direction="row" spacing={1} alignItems="center">
                 <TextField
                   id="osc-addr-b"
-                  label="Address Name"
+                  label="地址名称"
                   variant="standard"
                   fullWidth
                   value={oscAddressB}
@@ -157,7 +157,7 @@ export const CoyoteOSCAddress = () => {
                   startIcon={<AutoFixHighIcon />}
                   onClick={() => openPicker('b')}
                 >
-                  Auto Fetch
+                  自动获取
                 </Button>
               </Stack>
             </Stack>
@@ -171,7 +171,7 @@ export const CoyoteOSCAddress = () => {
           variant="contained"
           onClick={updateOscAddress}
         >
-          Save
+          保存
         </Button>
         <Snackbar
           open={openSuccess}
@@ -180,7 +180,7 @@ export const CoyoteOSCAddress = () => {
           onClose={handleCloseSuccess}
         >
           <Alert onClose={handleCloseSuccess} severity="success" sx={{ width: '100%' }}>
-            updated OSC addresses successfully!
+            OSC 地址更新成功！
           </Alert>
         </Snackbar>
         <Snackbar
@@ -190,7 +190,7 @@ export const CoyoteOSCAddress = () => {
           onClose={handleCloseError}
         >
           <Alert onClose={handleCloseError} severity="error" sx={{ width: '100%' }}>
-            failed to update OSC addresses: {message}
+            OSC 地址更新失败：{message}
           </Alert>
         </Snackbar>
       </CardActions>
@@ -224,11 +224,11 @@ export const CoyoteOSCAddress = () => {
           </Typography>
 
           <FormControl fullWidth variant="standard" sx={{ mb: 2 }}>
-            <InputLabel id="avatar-select-label">Avatar</InputLabel>
+            <InputLabel id="avatar-select-label">角色</InputLabel>
             <Select
               labelId="avatar-select-label"
               value={selectedAvatarId}
-              label="Avatar"
+              label="角色"
               onChange={(evt) => setSelectedAvatarId(evt.target.value)}
             >
               {avatars.map((a) => (
@@ -271,7 +271,7 @@ export const CoyoteOSCAddress = () => {
                   >
                     <ListItemText
                       primary={p.name}
-                      secondary={p.type ? `Type: ${p.type}` : null}
+                      secondary={p.type ? `类型：${p.type}` : null}
                     />
                   </ListItemButton>
                 ))}

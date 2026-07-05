@@ -11,7 +11,7 @@ const Page = () => (
   <>
     <Head>
       <title>
-        Overview | Devias Kit
+        总览 | OSC Toys
       </title>
     </Head>
     <Box

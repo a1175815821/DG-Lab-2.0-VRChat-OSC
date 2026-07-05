@@ -3,6 +3,7 @@ import multiprocessing
 import os
 import uvicorn
 from settings import Settings, settings
+from common.paths import BASE_DIR
 from pythonosc import osc_server
 from routers import coyote, osc_server, vrc_osc
 from fastapi import BackgroundTasks, FastAPI
@@ -13,7 +14,7 @@ app = FastAPI()
 app.include_router(coyote.router)
 app.include_router(osc_server.router)
 app.include_router(vrc_osc.router)
-app.mount("/", StaticFiles(directory=r"frontend\out", html=True), name="frontend")
+app.mount("/", StaticFiles(directory=os.path.join(BASE_DIR, "frontend", "out"), html=True), name="frontend")
 
 
 @app.on_event("startup")

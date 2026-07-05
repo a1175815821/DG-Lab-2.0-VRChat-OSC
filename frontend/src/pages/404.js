@@ -7,7 +7,7 @@ const Page = () => (
   <>
     <Head>
       <title>
-        404 | Devias Kit
+        404 | OSC Toys
       </title>
     </Head>
     <Box
@@ -48,15 +48,14 @@ const Page = () => (
             sx={{ mb: 3 }}
             variant="h3"
           >
-            404: The page you are looking for isn’t here
+            404：您访问的页面不存在
           </Typography>
           <Typography
             align="center"
             color="text.secondary"
             variant="body1"
           >
-            You either tried some shady route or you came here by mistake.
-            Whichever it is, try using the navigation
+            您可能访问了无效的路径。请使用导航栏继续浏览。
           </Typography>
           <Button
             component={NextLink}
@@ -69,7 +68,7 @@ const Page = () => (
             sx={{ mt: 3 }}
             variant="contained"
           >
-            Go back to dashboard
+            返回首页
           </Button>
         </Box>
       </Container>

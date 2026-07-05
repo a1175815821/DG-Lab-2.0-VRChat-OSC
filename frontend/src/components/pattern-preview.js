@@ -72,7 +72,7 @@ export const PatternPreview = ({ pattern, playing = false, height = 160 }) => {
       ctx.fillStyle = theme.palette.text.disabled;
       ctx.font = '12px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('No pattern data', cssWidth / 2, cssHeight / 2);
+      ctx.fillText('暂无波形数据', cssWidth / 2, cssHeight / 2);
       return;
     }
 

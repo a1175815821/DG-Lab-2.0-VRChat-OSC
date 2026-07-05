@@ -9,6 +9,7 @@
   <img alt="GitHub repo size" src="https://img.shields.io/github/repo-size/a1175815821/DG-Lab-2.0-VRChat-OSC">
   <img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/a1175815821/DG-Lab-2.0-VRChat-OSC">
   <img alt="GitHub stars" src="https://img.shields.io/github/stars/a1175815821/DG-Lab-2.0-VRChat-OSC?style=social">
+  <img alt="GitHub release" src="https://img.shields.io/github/v/release/a1175815821/DG-Lab-2.0-VRChat-OSC">
 </p>
 
 <p align="center">
@@ -25,7 +26,7 @@
 - [快速开始](#快速开始)
 - [配置说明](#配置说明)
 - [架构说明](#架构说明)
-- [相对于上游的改动](#相对于上游的改动)
+- [版本历史](#版本历史)
 - [常见问题](#常见问题)
 - [安全警告](#安全警告)
 - [致谢](#致谢)
@@ -39,44 +40,63 @@
 
 ## 主要特性
 
-### 修复的关键 Bug（上游存在）
+### OSC 监听与设备解耦 ⭐
+
+- **OSC 监听独立于设备连接**：应用启动即运行 OSC 监听服务，无需 Coyote 设备在手即可测试 VRChat 信号是否正常
+- **OSC 地址热更新**：修改 OSC 地址无需断开设备，自动重启监听服务应用新地址
+- **OSC 链接状态实时显示**：首页 OSC 状态卡片显示服务运行状态、A/B 通道信号活跃度（绿/黄/灰三色指示）
+
+### 信号映射修复
 
 - 修复 `get_avg` 信号映射逻辑错误：原代码只有两档输出（min_power / 满档），现已实现 `start_limit → 0`、`min_limit → min_power`、`max_limit → 1.0` 之间的平滑线性插值
 - 修复信号低于阈值时 `set_pwm(1, -1)` 应为 `0` 的问题（原代码会留下微弱持续输出）
 - 修复 `start_limit` 配置项未被使用、阈值硬编码 `0.1` 的问题
-- 修复 Stop 时 `transport.close()` 在未连接状态下崩溃的问题
 - 修复 `power_multiplier` 配置失效问题（原硬编码 1.28，现读取 `settings.coyote_multiplier`）
+- `can_update_power` 超时兜底：set_pwm 锁定超过 5 秒自动恢复，防止 signal() 异常后永久失效
+- `set_pwm` 微调阈值从 2 改为 1，支持更精细的强度调节
 
 ### 强度范围对齐官方
 
 DG-Lab Coyote 官方强度范围为 **0–200**，本项目已全面对齐：
 
 - `set_pwm` 输入范围：0–200（safe_mode 启用时上限 100）
-- 前端 Max Power slider：0–200
-- 功率死区从 `< 10` 缩小到 `< 2`，避免小变化被忽略导致的突跳
+- 前端强度调节滑块：0–200，支持滑块拖动和数字直接输入
+- 强度调整控件移至侧边栏，在任意页面都能直接调整
 
 ### OSC 地址自动获取
 
-VRChat 会在 `%LOCALAPPDATA%\Low\VRChat\VRChat\OSC\` 下为每个 avatar 生成 OSC 配置 json。本项目新增 `/api/vrc/avatars` 接口读取该目录，前端 OSC Addresses 卡片新增 **Auto Fetch** 按钮：
+VRChat 会在 `%LOCALAPPDATA%\Low\VRChat\VRChat\OSC\` 下为每个 avatar 生成 OSC 配置 json。本项目新增 `/api/vrc/avatars` 接口读取该目录：
 
-- 点击后弹窗列出所有本地 avatar
-- 仅显示 Float 类型参数（本项目需要 0–1 浮点值）
-- 点击参数即自动填入对应通道，无需再手动复制粘贴
+- 修复 BOM 编码问题：使用 `utf-8-sig` 读取 VRC 生成的 json 文件
+- 修复参数地址解析：优先读取 `output.address`（完整 OSC 路径），而非 `name`
+- 前端 Auto Fetch 按钮弹窗列出所有本地 avatar
+- 仅显示 Float 类型参数，点击即自动填入对应通道
 
-### Patterns 波形可视化预览
+### Patterns 波形可视化
 
-- Patterns 卡片下方新增 Canvas 波形预览组件
-- 每个 pattern state（`[脉冲时长, 间隔, 幅度]`）以矩形高度直观呈现
-- 设备连接后会出现红色播放指针循环扫过波形，表示当前正在按该波形输出
-- 显示波形总时长与播放状态
+- Patterns 卡片下方 Canvas 波形预览组件，每个 state（`[脉冲时长, 间隔, 幅度]`）以矩形高度直观呈现
+- 设备连接后红色播放指针循环扫过波形，表示当前正在按该波形输出
+- **Pattern 中文名映射**：23 个波形名称中文化（震动/脉冲/呼吸/波浪/武器冲击/场景专用等类别）
 
-### UI 改进
+### UI 全面汉化与改进
 
-- 窗口默认尺寸从 1920×1080 调整为 **1280×820**，不再霸占屏幕
+- **全面汉化**：所有 UI 文案改为中文，包括导航、按钮、提示、状态等
 - **深浅色主题切换**：右上角日/月图标按钮，选择持久化到 localStorage，首次访问跟随系统偏好
-- 修复侧边栏左下角文字不可见问题（原 `neutral.500` 等灰色文字在深色背景上对比度极低，已统一改为白色透明度三档）
+- 窗口默认尺寸 1280×820，不再霸占屏幕
+- 修复侧边栏左下角文字不可见问题
 - 侧边栏背景色随主题切换（浅色 `#1C2536`，深色 `#0B1220`）
-- 顶栏增加分隔线，毛玻璃背景透明度调整
+- **安全模式开关**：首页安全模式卡片，切换即时生效并持久化
+- **启动设备二次确认**：安全模式关闭时启动设备需确认弹窗，警告全功率输出风险
+- **蓝牙扫描进度指示**：连接按钮显示"连接中... 剩余 XX 秒"+ 进度条，40 秒超时提示
+- **GitHub 统计缓存降级**：localStorage 缓存 + 超时降级显示，避免阻塞初始化
+- **API 错误可见反馈**：所有 API 错误连续失败 3 次以上显示警告提示，不再静默吞掉
+
+### 工程优化
+
+- **聚合状态接口**：`/api/coyote/aggregate_status` 一次请求返回所有状态，减少前端轮询
+- **打包路径修复**：区分只读资源目录（`BASE_DIR`）和用户配置目录（`USER_DATA_DIR`），首次运行自动释放 settings.yaml
+- **进程模型重构**：uvicorn 作为 daemon 子进程，关闭窗口后 `os._exit(0)` 清理进程树
+- **代码清理**：删除空文件、未使用的 hook、constants.py 使用 BASE_DIR
 
 
 ## 快速开始
@@ -87,9 +107,10 @@ VRChat 会在 `%LOCALAPPDATA%\Low\VRChat\VRChat\OSC\` 下为每个 avatar 生成
 2. 解压后运行 `osc-toys.exe`
 3. 准备一个支持 OSC 参数的 VRChat 形象（参数需为 Float 类型，例如 `VRCContactReceiver` Proximity 探针）
 4. 启动 VRChat，在 WebUI 中：
-   - **Coyote** 页面填写设备 UID（留空可自动扫描）→ 点击 `Connect and Start`
-   - **OSC Addresses** 页面点击 `Auto Fetch` 从本地 VRC 配置自动读取参数
-   - **Max Power** 调整最大强度（0–200，建议从 50 开始）
+   - **总览页** 查看 OSC 链接状态、安全模式开关
+   - **Coyote 页面** 填写设备 UID（留空可自动扫描）→ 点击「连接并启动」（安全模式关闭时需二次确认）
+   - **OSC 地址** 点击「自动获取」从本地 VRC 配置读取参数
+   - **侧边栏** 调整 A/B 通道强度上限（0–200，建议从 50 开始）
    - **Patterns** 选择波形并查看实时预览
 5. 享受反馈
 
@@ -116,7 +137,7 @@ python main.py
 
 ## 配置说明
 
-大部分配置可在 WebUI 中修改并自动持久化到 `settings.yaml`。如需手动调整，关键字段如下：
+大部分配置可在 WebUI 中修改并自动持久化到 `settings.yaml`。首次运行时程序会从内置默认配置释放一份 `settings.yaml` 到 exe 同目录，便于用户修改。关键字段如下：
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
@@ -175,56 +196,85 @@ python main.py
 
 ### 后端（Python）
 
-- `main.py` — FastAPI 入口，启动 uvicorn（端口 38080）+ pywebview 桌面窗口
-- `routers/coyote.py` — Coyote 设备控制 API 与 OSC 信号处理
-- `routers/osc_server.py` — VRC OSC 地址配置 API
-- `routers/vrc_osc.py` — **新增**，读取 VRC 本地 OSC json，提供 avatar 参数列表
+- `main.py` — FastAPI 入口，启动 uvicorn（端口 38080）+ pywebview 桌面窗口；应用启动时即启动 OSC 监听
+- `common/paths.py` — 资源路径解析，区分 `BASE_DIR`（只读资源）和 `USER_DATA_DIR`（用户配置）
+- `routers/coyote.py` — Coyote 设备控制 API、OSC 信号处理、聚合状态接口
+- `routers/osc_server.py` — VRC OSC 地址配置 API（支持热更新）
+- `routers/vrc_osc.py` — 读取 VRC 本地 OSC json，提供 avatar 参数列表
 - `toys/estim/coyote/dg_interface.py` — 基于 bleak 的蓝牙通信实现
 - `settings.py` / `settings.yaml` — 配置模型与持久化
 
 ### 前端（Next.js + MUI）
 
 - `src/pages/_app.js` — 主题与 ColorModeContext Provider
-- `src/contexts/color-mode-context.js` — **新增**，深浅色模式 Context
-- `src/components/pattern-preview.js` — **新增**，Canvas 波形预览组件
-- `src/sections/coyote/` — Coyote 控制台各卡片（status/address/power/pattern）
+- `src/contexts/color-mode-context.js` — 深浅色模式 Context
+- `src/components/pattern-preview.js` — Canvas 波形预览组件
+- `src/sections/coyote/` — Coyote 控制台各卡片（status/address/pattern）
+- `src/sections/overview/` — 总览页（coyote/vrc/osc-status/safe-mode）
 - `src/theme/` — MUI 主题，支持 light/dark 双模式
-- `src/layouts/dashboard/` — 侧边栏、顶栏（含主题切换按钮）
+- `src/layouts/dashboard/` — 侧边栏（含强度调节）、顶栏（含主题切换按钮）
 
-## 相对于上游的改动
+## 版本历史
 
-| 模块 | 改动 |
-|---|---|
-| `routers/coyote.py` | 修复 `get_avg` 映射、`set_pwm(0)` 断电、`start_limit` 生效、`transport` 空指针、`power_multiplier` 读取配置；新增 patterns detail 接口 |
-| `toys/estim/coyote/dg_interface.py` | 强度范围 0–2047 → 0–200；safe_mode 上限 768 → 100；死区 10 → 2 |
-| `routers/vrc_osc.py` | 新增文件，读取 VRC 本地 OSC json |
-| `main.py` | 注册新路由；窗口尺寸 1920×1080 → 1280×820 |
-| `settings.yaml` / `settings.py` | 默认值更新（max_power 100、multiplier 2.0） |
-| `frontend/src/contexts/` | 新增 color-mode-context |
-| `frontend/src/components/pattern-preview.js` | 新增波形预览组件 |
-| `frontend/src/sections/coyote/coyote-address.js` | 新增 Auto Fetch 弹窗 |
-| `frontend/src/sections/coyote/coyote-pattern.js` | 集成波形预览与实时状态 |
-| `frontend/src/sections/coyote/coyote-power.js` | slider max 768 → 200 |
-| `frontend/src/theme/` | createPalette/createTheme 支持 light/dark |
-| `frontend/src/pages/_app.js` | 引入 ColorModeContext、localStorage 持久化、系统偏好跟随 |
-| `frontend/src/layouts/dashboard/` | 顶栏主题切换按钮；侧边栏文字对比度修复 |
+### v1.5
+
+- 修复 VRC OSC 模型读取：BOM 编码（`utf-8` → `utf-8-sig`）+ 参数地址优先读取 `output.address`
+- 完整汉化波形文件：扩展 Pattern 中文名映射至 23 个（武器冲击类、场景专用类）
+
+### v1.3
+
+- OSC 监听独立于设备连接，无需 Coyote 在手即可测试 VRChat 信号
+- OSC 地址热更新，无需断开设备
+- 首页新增 OSC 链接状态卡片
+- 启动设备二次确认（安全模式关闭时）
+- 蓝牙扫描进度指示 + 40 秒倒计时
+- Pattern 中文名映射
+- GitHub 统计 localStorage 缓存 + 降级显示
+- 聚合状态接口减少前端轮询
+- can_update_power 超时兜底
+- API 错误可见反馈
+
+### v1.2
+
+- 修复 Nuitka 打包后 settings.yaml 找不到的问题（区分 BASE_DIR / USER_DATA_DIR）
+- 新增安全模式开关（首页卡片）
+- 修复 OSC 地址修改不持久化
+- 修复停止设备后电量残留
+
+### v1.1
+
+- 全面汉化 UI 文案
+- 强度调整迁移至侧边栏
+- 新增 OSC 链接状态判定
+
+### v1.0
+
+- 修复 `get_avg` 信号映射逻辑
+- 强度范围对齐官方 0–200
+- OSC 地址自动获取
+- Patterns 波形可视化预览
+- 深浅色主题切换
+- 窗口默认尺寸 1280×820
 
 ## 常见问题
 
 **Q: 程序连不上 Coyote？**
-A: 确保设备指示灯不是白色（白色为配对模式）。尝试重启程序、重启电脑蓝牙、将设备靠近电脑。信号干扰多时连接质量会下降。
-
-**Q: 强度变化有延迟？**
-A: 默认 `window_size = 0.1` 秒更新一次。可减小该值提升响应速度，但太小会导致设备处理不过来反而延迟。建议在 0.05–0.1 之间寻找平衡。
+A: 确保设备指示灯不是白色（白色为配对模式）。尝试重启程序、重启电脑蓝牙、将设备靠近电脑。信号干扰多时连接质量会下降。自动扫描失败可在 UID 输入框填入设备的实际 MAC 地址（格式如 `C9:9F:E4:2E:31:60`）跳过自动搜索。
 
 **Q: Auto Fetch 拉不到参数？**
 A: 请先在 VRChat 中切换到目标 avatar 至少一次，让 VRC 生成 OSC 配置 json。同时确认 VRChat 设置中 OSC 已启用。
 
 **Q: 改了 `settings.yaml` 没生效？**
-A: 部分配置（如 `coyote_addr_a/b`）在设备已连接时无法修改，请先 Disconnect 再改。改完点击 Save 会自动持久化。
+A: OSC 地址修改支持热更新，无需断开设备。其他配置改完会自动持久化。如果打包版 exe 的 settings.yaml 在 exe 同目录，修改后会自动保存。
 
 **Q: 深色模式不跟随系统？**
 A: 首次访问会跟随系统，之后以手动选择为准（保存在 localStorage）。清除浏览器/应用缓存可重置。
+
+**Q: 强度变化有延迟？**
+A: 默认 `window_size = 0.1` 秒更新一次。可减小该值提升响应速度，但太小会导致设备处理不过来反而延迟。建议在 0.05–0.1 之间寻找平衡。
+
+**Q: 打包版 exe 启动后 settings.yaml 在哪？**
+A: 在 exe 同目录。首次运行时会从 exe 内部释放默认配置到外部，之后修改的配置都会保存到这个文件。
 
 ## 安全警告
 
@@ -234,8 +284,9 @@ A: 首次访问会跟随系统，之后以手动选择为准（保存在 localSt
 - 不要在意识不清的状态下使用
 - 设备工作时不要移动或接触电极
 - 不要在未经明确同意的情况下对他人使用
-- 始终保持 `coyote_safe_mode: true`，除非你完全清楚后果
-- 使用前请确保 Max Power 从低值开始逐步调整
+- 始终保持安全模式开启（限制上限 100），除非你完全清楚后果
+- 关闭安全模式后启动设备会有二次确认弹窗，请谨慎操作
+- 使用前请确保强度从低值开始逐步调整
 
 详见 `toys/estim/coyote/dg_interface.py` 文件头部的完整免责声明。
 

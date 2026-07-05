@@ -46,7 +46,7 @@ async def list_avatars() -> Dict[str, Any]:
     # 递归查找所有 .json 文件
     for json_path in glob.glob(os.path.join(osc_root, "**", "*.json"), recursive=True):
         try:
-            with open(json_path, "r", encoding="utf-8") as f:
+            with open(json_path, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
         except Exception:
             continue
@@ -74,8 +74,17 @@ async def list_avatars() -> Dict[str, Any]:
         elif isinstance(params, list):
             for p in params:
                 if isinstance(p, dict):
-                    addr = p.get("name") or p.get("address", "")
-                    ptype = p.get("type", "")
+                    # 优先使用 output.address（完整 OSC 路径），其次 name
+                    out = p.get("output") if isinstance(p, dict) else None
+                    addr = ""
+                    ptype = ""
+                    if isinstance(out, dict):
+                        addr = out.get("address", "")
+                        ptype = out.get("type", "")
+                    if not addr:
+                        addr = p.get("name") or p.get("address", "")
+                    if not ptype:
+                        ptype = p.get("type", "")
                     if addr:
                         parameters.append({"name": addr, "type": ptype})
 

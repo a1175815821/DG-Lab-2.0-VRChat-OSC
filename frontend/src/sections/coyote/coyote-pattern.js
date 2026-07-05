@@ -22,19 +22,29 @@ import { PatternPreview } from 'src/components/pattern-preview';
 
 // Pattern 中文名映射表：技术命名 → 中文友好名称
 const PATTERN_NAME_MAP = {
-  vibrator_1: '震动·轻柔',
-  vibrator_2: '震动·中等',
-  vibrator_3: '震动·强烈',
-  vibrator_4: '震动·快速',
-  pulse_1: '脉冲·短促',
-  pulse_2: '脉冲·中等',
-  pulse_3: '脉冲·强烈',
-  breathing_1: '呼吸·轻柔',
-  breathing_2: '呼吸·深沉',
-  wave_1: '波浪·平缓',
-  wave_2: '波浪·激烈',
-  squeeze: '挤压',
-  random: '随机',
+  // 震动类
+  vibrator:    '震动·全系列',
+  vibrator_1:  '震动·轻柔',
+  vibrator_2:  '震动·中等',
+  vibrator_3:  '震动·强烈',
+  vibrator_4:  '震动·快速',
+  vibrator_5:  '震动·极强',
+  // 武器冲击类
+  arrow:       '箭矢·穿刺',
+  axe:         '斧头·劈砍',
+  blade:       '刀剑·切割',
+  blunt:       '钝器·重击',
+  unarmed:     '徒手·拳击',
+  // 场景专用类
+  untyped_sex: '通用·亲密',
+  anal:        '专用·后庭',
+  vaginal:     '专用·阴道',
+  oral:        '专用·口',
+  fisting:     '专用·拳交',
+  masturbation: '专用·自慰',
+  boobjob:     '专用·胸交',
+  // 通用
+  random:  '随机',
   default: '默认',
 };
 

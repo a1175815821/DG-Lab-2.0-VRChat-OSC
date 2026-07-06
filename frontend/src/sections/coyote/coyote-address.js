@@ -36,7 +36,6 @@ export const CoyoteOSCAddress = () => {
   // 自动获取相关状态
   const [pickerOpen, setPickerOpen] = useState(false);
   const [avatars, setAvatars] = useState([]);
-  const [selectedAvatarId, setSelectedAvatarId] = useState('');
   const [loadingAvatars, setLoadingAvatars] = useState(false);
   const [pickerError, setPickerError] = useState('');
   // 当前正在选择的通道：'a' 或 'b'
@@ -66,11 +65,7 @@ export const CoyoteOSCAddress = () => {
     setLoadingAvatars(true);
     setPickerError('');
     axios.get('/api/vrc/avatars').then((res) => {
-      const list = res.data.avatars || [];
-      setAvatars(list);
-      if (list.length > 0) {
-        setSelectedAvatarId(list[0].id);
-      }
+      setAvatars(res.data.avatars || []);
     }).catch((err) => {
       console.error(err);
       setPickerError(err.response?.data?.detail || String(err));
@@ -81,10 +76,8 @@ export const CoyoteOSCAddress = () => {
 
   const openPicker = (channel) => {
     setPickingFor(channel);
+    fetchAvatars(); // 每次打开都重新获取
     setPickerOpen(true);
-    if (avatars.length === 0) {
-      fetchAvatars();
-    }
   };
 
   const handleCloseSuccess = (event, reason) => {
@@ -101,16 +94,16 @@ export const CoyoteOSCAddress = () => {
     getOscAddress();
   }, []);
 
-  const selectedAvatar = avatars.find((a) => a.id === selectedAvatarId);
-  // 仅显示 Float 类型（或类型未知）的参数，因为本项目需要 0-1 之间的浮点值
-  const floatParams = (selectedAvatar?.parameters || []).filter(
+  // 当前穿戴模型（自动选定）
+  const currentAvatar = avatars.find((a) => a.is_current);
+  const floatParams = (currentAvatar?.parameters || []).filter(
     (p) => !p.type || p.type.toLowerCase() === 'float'
   );
 
   return (
     <Card>
       <CardHeader
-        subheader="管理 VRChat 参数的 OSC 地址。可手动填写，或点击“自动获取”从 VRC 本地配置读取。"
+        subheader={'管理 VRChat 参数的 OSC 地址。可手动填写，或点击「自动获取」从 VRC 本地配置读取。'}
         title="OSC 地址"
       />
       <Divider />
@@ -216,28 +209,22 @@ export const CoyoteOSCAddress = () => {
             flexDirection: 'column'
           }}
         >
-          <Typography id="osc-picker-title" variant="h6" sx={{ mb: 1 }}>
+          <Typography id="osc-picker-title" variant="h6" sx={{ mb: 0.5 }}>
             选择参数 — 通道 {pickingFor.toUpperCase()}
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            从 VRChat 本地 OSC 配置中读取可用参数。仅显示 Float 类型参数。
-          </Typography>
 
-          <FormControl fullWidth variant="standard" sx={{ mb: 2 }}>
-            <InputLabel id="avatar-select-label">角色</InputLabel>
-            <Select
-              labelId="avatar-select-label"
-              value={selectedAvatarId}
-              label="角色"
-              onChange={(evt) => setSelectedAvatarId(evt.target.value)}
-            >
-              {avatars.map((a) => (
-                <MenuItem value={a.id} key={a.id}>
-                  {a.name}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+          {currentAvatar && (
+            <Typography variant="body2" color="primary" sx={{ mb: 0.5, fontWeight: 600 }}>
+              当前 Avatar：{currentAvatar.id}
+            </Typography>
+          )}
+
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            从 VRChat 本地 OSC 配置读取。仅显示 Float 类型参数。
+          </Typography>
+          <Typography variant="body2" color="warning.main" sx={{ mb: 2, fontWeight: 500 }}>
+            OGB/Orf 开头的参数未出现在列表中，请手动填写（如 /avatar/parameters/OGB/...）。
+          </Typography>
 
           {loadingAvatars && (
             <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>

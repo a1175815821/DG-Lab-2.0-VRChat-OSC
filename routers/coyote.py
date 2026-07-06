@@ -1,6 +1,10 @@
+from collections import deque
+import json
+
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import StreamingResponse
 import asyncio
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 from settings import settings
@@ -25,6 +29,19 @@ ci = CoyoteInterface(
 transport = None  # OSC transport，独立于设备连接
 _signal_task: Optional[asyncio.Task] = None  # 信号输出任务（start_channel_a/b）
 
+# ─── VRChat 当前穿戴模型追踪 ──────────────────────────────────────────────
+current_vrc_avatar_id: Optional[str] = None  # 通过 /avatar/change 实时更新
+current_vrc_avatar_ts: float = 0.0  # 上次更新时间戳
+
+
+def avatar_change_handler(addr, args, avatar_id):
+    """监听 VRChat 切换模型事件，实时记录当前穿戴的 avatar ID"""
+    global current_vrc_avatar_id, current_vrc_avatar_ts
+    if isinstance(avatar_id, str) and avatar_id.startswith("avtr_"):
+        current_vrc_avatar_id = avatar_id
+        current_vrc_avatar_ts = time.time()
+        logging.info(f"VRChat 切换模型: {avatar_id}")
+
 
 # ─── can_update_power 超时兜底 ────────────────────────────────────────────
 # set_pwm 设为 False 后，如果 signal() 异常退出会永久失效。
@@ -48,6 +65,48 @@ last_time_a = time.time()
 cur_time_a: Optional[float] = None
 last_time_b = time.time()
 cur_time_b: Optional[float] = None
+
+# ─── 实时监控数据 ──────────────────────────────────────────────────────────
+latest_raw_a: float = 0.0        # 最新收到的 A 通道原始 OSC 值
+latest_raw_b: float = 0.0        # 最新收到的 B 通道原始 OSC 值
+latest_avg_a: float = 0.0        # 最近一次计算的 A 通道平均值
+latest_avg_b: float = 0.0        # 最近一次计算的 B 通道平均值
+latest_mapped_a: float = 0.0     # 最近一次映射后的 A 通道输出比例 (0-1)
+latest_mapped_b: float = 0.0     # 最近一次映射后的 B 通道输出比例 (0-1)
+msg_history: deque = deque(maxlen=20)  # 最近 20 条 OSC 消息记录
+
+
+def _push_history(ch: str, raw: float):
+    """向消息历史追加一条记录（仅原始值，avg/mapped 由首次 SSE 构建时从全局变量读取）"""
+    msg_history.append({
+        "ts": time.time(),
+        "ch": ch,
+        "raw": round(raw, 4),
+    })
+
+
+def _build_monitor_payload() -> Dict[str, Any]:
+    """构建 SSE/API 实时监控数据"""
+    now = time.time()
+    a_active = cur_time_a is not None and (now - cur_time_a) < 2.0
+    b_active = cur_time_b is not None and (now - cur_time_b) < 2.0
+    return {
+        "ts": now,
+        "a": {
+            "raw": latest_raw_a,
+            "avg": latest_avg_a,
+            "mapped": latest_mapped_a,
+            "active": a_active,
+        },
+        "b": {
+            "raw": latest_raw_b,
+            "avg": latest_avg_b,
+            "mapped": latest_mapped_b,
+            "active": b_active,
+        },
+        "history": list(msg_history),
+        "current_avatar_id": current_vrc_avatar_id,
+    }
 
 
 def get_avg(queue: List[float]) -> float:
@@ -75,9 +134,12 @@ def get_avg(queue: List[float]) -> float:
 
 
 def coyote_handler_a(addr, args, dis):
-    """处理 A 通道 OSC 信号。设备未连接时只记录信号时间，不输出。"""
-    global param_queue_a, last_time_a, cur_time_a
+    """处理 A 通道 OSC 信号。记录原始值、历史，设备连接时按窗口输出功率。"""
+    global param_queue_a, last_time_a, cur_time_a, latest_raw_a, latest_avg_a, latest_mapped_a
     cur_time_a = time.time()
+    latest_raw_a = dis
+    # 记录每条原始消息到历史
+    _push_history("A", dis)
 
     # 设备未连接时跳过输出（OSC 监听独立于设备连接）
     if not ci or not ci.is_connected:
@@ -92,12 +154,15 @@ def coyote_handler_a(addr, args, dis):
             param_queue_a.append(dis)
             return
         s = get_avg(param_queue_a)
-        loop = asyncio.get_event_loop()
+        latest_avg_a = s
         if s < settings.start_limit:
-            asyncio.ensure_future(ci.set_pwm(0, -1), loop=loop)
+            latest_mapped_a = 0.0
+            asyncio.ensure_future(ci.set_pwm(0, -1), loop=asyncio.get_event_loop())
         else:
+            latest_mapped_a = s
+            power = min(200, int(settings.coyote_max_power_a * s * settings.coyote_multiplier))
             asyncio.ensure_future(
-                ci.set_pwm(int(settings.coyote_max_power_a * s), -1), loop=loop
+                ci.set_pwm(power, -1), loop=asyncio.get_event_loop()
             )
         param_queue_a = []
     else:
@@ -105,9 +170,12 @@ def coyote_handler_a(addr, args, dis):
 
 
 def coyote_handler_b(addr, args, dis):
-    """处理 B 通道 OSC 信号。设备未连接时只记录信号时间，不输出。"""
-    global param_queue_b, last_time_b, cur_time_b
+    """处理 B 通道 OSC 信号。记录原始值、历史，设备连接时按窗口输出功率。"""
+    global param_queue_b, last_time_b, cur_time_b, latest_raw_b, latest_avg_b, latest_mapped_b
     cur_time_b = time.time()
+    latest_raw_b = dis
+    # 记录每条原始消息到历史
+    _push_history("B", dis)
 
     if not ci or not ci.is_connected:
         return
@@ -120,12 +188,15 @@ def coyote_handler_b(addr, args, dis):
             param_queue_b.append(dis)
             return
         s = get_avg(param_queue_b)
-        loop = asyncio.get_event_loop()
+        latest_avg_b = s
         if s < settings.start_limit:
-            asyncio.ensure_future(ci.set_pwm(-1, 0), loop=loop)
+            latest_mapped_b = 0.0
+            asyncio.ensure_future(ci.set_pwm(-1, 0), loop=asyncio.get_event_loop())
         else:
+            latest_mapped_b = s
+            power = min(200, int(settings.coyote_max_power_b * s * settings.coyote_multiplier))
             asyncio.ensure_future(
-                ci.set_pwm(-1, int(settings.coyote_max_power_b * s)), loop=loop
+                ci.set_pwm(-1, power), loop=asyncio.get_event_loop()
             )
         param_queue_b = []
     else:
@@ -143,11 +214,41 @@ async def serve_osc():
     dispatcher = Dispatcher()
     dispatcher.map(settings.coyote_addr_a, coyote_handler_a, "A")
     dispatcher.map(settings.coyote_addr_b, coyote_handler_b, "B")
+    dispatcher.map("/avatar/change", avatar_change_handler, "avatar")
     server = osc_server.AsyncIOOSCUDPServer(
         (settings.vrc_host, settings.vrc_osc_port), dispatcher, asyncio.get_event_loop()
     )
     transport, _ = await server.create_serve_endpoint()
     logging.info(f"OSC 服务已启动: {settings.vrc_host}:{settings.vrc_osc_port}")
+
+
+# ─── 实时监控 SSE ──────────────────────────────────────────────────────────
+@router.get("/osc_stream")
+async def osc_stream():
+    """SSE 实时推送 OSC 信号数值、映射结果、消息历史"""
+
+    async def event_generator():
+        last_payload = None
+        try:
+            while True:
+                payload = _build_monitor_payload()
+                # 仅数据有变化时推送，减少不必要传输
+                if payload != last_payload:
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    last_payload = payload
+                await asyncio.sleep(0.15)
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 async def start_signal_output():
@@ -221,8 +322,11 @@ class UpdatePowerRequest(BaseModel):
 
 @router.post("/max_power")
 async def update_max_power(req: UpdatePowerRequest):
-    """设置 A/B 通道最大强度。"""
+    """设置 A/B 通道最大强度。安全模式下上限强制 100。"""
     try:
+        safe_limit = 100 if settings.coyote_safe_mode else 200
+        pow_a = min(req.pow_a, safe_limit)
+        pow_b = min(req.pow_b, safe_limit)
         if settings.coyote_max_power_a != 0:
             percentage_a = ci.pow_a / settings.coyote_max_power_a
         else:
@@ -231,11 +335,11 @@ async def update_max_power(req: UpdatePowerRequest):
             percentage_b = ci.pow_b / settings.coyote_max_power_b
         else:
             percentage_b = 0.5
-        settings.coyote_max_power_a = req.pow_a
-        settings.coyote_max_power_b = req.pow_b
-        await ci.set_pwm(int(percentage_a * req.pow_a), int(percentage_b * req.pow_b))
+        settings.coyote_max_power_a = pow_a
+        settings.coyote_max_power_b = pow_b
+        await ci.set_pwm(int(percentage_a * pow_a), int(percentage_b * pow_b))
         settings.dump()
-        return {"msg": "success"}
+        return {"msg": "success", "max_power_a": pow_a, "max_power_b": pow_b}
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
@@ -259,11 +363,16 @@ async def get_safe_mode():
 
 @router.post("/safe_mode")
 async def update_safe_mode(req: UpdateSafeModeRequest):
-    """设置安全模式。启用后最大强度限制为 100，关闭后允许到 200。"""
+    """设置安全模式。启用后最大强度限制为 100 并自动裁剪已有值。"""
     try:
         settings.coyote_safe_mode = req.safe_mode
         if ci is not None:
             ci.safe_mode = req.safe_mode
+        if req.safe_mode:
+            if settings.coyote_max_power_a > 100:
+                settings.coyote_max_power_a = 100
+            if settings.coyote_max_power_b > 100:
+                settings.coyote_max_power_b = 100
         settings.dump()
         return {"msg": "success", "safe_mode": settings.coyote_safe_mode}
     except Exception as e:

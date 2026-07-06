@@ -56,6 +56,8 @@ export const CoyotePattern = () => {
   const [patternA, setPatternA] = useState('');
   const [patternB, setPatternB] = useState('');
   const [connected, setConnected] = useState(false);
+  const [signalA, setSignalA] = useState(undefined);
+  const [signalB, setSignalB] = useState(undefined);
   const [openSuccess, setOpenSuccess] = useState(false);
   const [openError, setOpenError] = useState(false);
   const [message, setMessage] = useState('');
@@ -143,9 +145,22 @@ export const CoyotePattern = () => {
     getPatternDetails();
     getPattern();
     getStatus();
-    // 实时显示：每 2 秒刷新一次连接状态，用于切换"实时播放中"提示
     const id = setInterval(getStatus, 2000);
     return () => clearInterval(id);
+  }, []);
+
+  // SSE 实时信号数值
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const es = new EventSource('/api/coyote/osc_stream');
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        setSignalA(data.a?.raw);
+        setSignalB(data.b?.raw);
+      } catch (e) { /* ignore */ }
+    };
+    return () => es.close();
   }, []);
 
   // 当前选中的 pattern 取首个变体。
@@ -200,6 +215,7 @@ export const CoyotePattern = () => {
                 <PatternPreview
                   pattern={getFirstVariant(patternA)}
                   playing={connected}
+                  signalValue={connected ? signalA : undefined}
                 />
               </Box>
             </Stack>
@@ -227,6 +243,7 @@ export const CoyotePattern = () => {
                 <PatternPreview
                   pattern={getFirstVariant(patternB)}
                   playing={connected}
+                  signalValue={connected ? signalB : undefined}
                 />
               </Box>
             </Stack>

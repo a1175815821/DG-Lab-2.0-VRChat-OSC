@@ -7,17 +7,48 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Collapse,
+  IconButton,
+  LinearProgress,
   Stack,
   Typography
 } from '@mui/material';
 import WifiIcon from '@mui/icons-material/Wifi';
 import WifiOffIcon from '@mui/icons-material/WifiOff';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+
+function SignalBar({ label, value, maxValue, color }) {
+  const pct = maxValue > 0 ? Math.min((value / maxValue) * 100, 100) : 0;
+  return (
+    <Stack spacing={0.25}>
+      <Stack direction="row" justifyContent="space-between">
+        <Typography variant="caption" color="text.secondary">{label}</Typography>
+        <Typography variant="caption" fontWeight="bold" sx={{ fontFamily: 'monospace' }}>
+          {value.toFixed(3)}
+        </Typography>
+      </Stack>
+      <LinearProgress
+        variant="determinate"
+        value={pct}
+        sx={{
+          height: 8,
+          borderRadius: 1,
+          bgcolor: 'action.hover',
+          '& .MuiLinearProgress-bar': { bgcolor: color || 'primary.main' },
+        }}
+      />
+    </Stack>
+  );
+}
 
 export const OverviewOscStatus = (props) => {
   const { sx } = props;
   const [status, setStatus] = useState(null);
+  const [monitor, setMonitor] = useState(null);
   const [serverError, setServerError] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const failCountRef = useRef(0);
 
   const getStatus = () => {
@@ -40,10 +71,36 @@ export const OverviewOscStatus = (props) => {
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const es = new EventSource('/api/coyote/osc_stream');
+    es.onmessage = (event) => {
+      try {
+        setMonitor(JSON.parse(event.data));
+        failCountRef.current = 0;
+        setServerError(false);
+      } catch (e) {
+        console.error('SSE parse error', e);
+      }
+    };
+    return () => es.close();
+  }, []);
+
   const oscRunning = status?.osc_running ?? false;
-  const aActive = status?.a_active ?? false;
-  const bActive = status?.b_active ?? false;
+  const aActive = monitor?.a?.active ?? status?.a_active ?? false;
+  const bActive = monitor?.b?.active ?? status?.b_active ?? false;
+  const vrcConnected = aActive || bActive;
   const deviceConnected = status?.device_connected ?? false;
+
+  const aRaw = monitor?.a?.raw ?? 0;
+  const bRaw = monitor?.b?.raw ?? 0;
+  const aMapped = monitor?.a?.mapped ?? 0;
+  const bMapped = monitor?.b?.mapped ?? 0;
+  const history = monitor?.history ?? [];
+  const maxPowerA = status?.max_power_a ?? 100;
+  const maxPowerB = status?.max_power_b ?? 100;
+  const aPowerOut = Math.round(aMapped * maxPowerA);
+  const bPowerOut = Math.round(bMapped * maxPowerB);
 
   return (
     <Card sx={sx}>
@@ -51,13 +108,13 @@ export const OverviewOscStatus = (props) => {
         <Stack spacing={2}>
           <Stack direction="row" alignItems="center" justifyContent="space-between">
             <Stack direction="row" alignItems="center" spacing={1}>
-              {oscRunning ? <WifiIcon color="success" /> : <WifiOffIcon color="disabled" />}
+              {vrcConnected ? <WifiIcon color="success" /> : (oscRunning ? <WifiIcon color="warning" /> : <WifiOffIcon color="disabled" />)}
               <Typography variant="h6">OSC 链接状态</Typography>
             </Stack>
             <Chip
               size="small"
-              label={oscRunning ? '运行中' : '未启动'}
-              color={oscRunning ? 'success' : 'default'}
+              label={!oscRunning ? '未启动' : (vrcConnected ? 'VRChat 已连接' : '等待 VRChat')}
+              color={vrcConnected ? 'success' : (oscRunning ? 'warning' : 'default')}
               variant="outlined"
             />
           </Stack>
@@ -74,7 +131,6 @@ export const OverviewOscStatus = (props) => {
 
           {status && (
             <>
-              {/* A/B 通道信号状态 */}
               <Stack direction="row" spacing={2}>
                 <Stack direction="row" alignItems="center" spacing={0.5}>
                   <FiberManualRecordIcon
@@ -93,6 +149,90 @@ export const OverviewOscStatus = (props) => {
                   </Typography>
                 </Stack>
               </Stack>
+
+              {oscRunning && (
+                <Box sx={{ px: 0.5 }}>
+                  <Stack spacing={1.5}>
+                    <SignalBar
+                      label={`A 原始值`}
+                      value={aRaw}
+                      maxValue={1}
+                      color={aActive ? '#4caf50' : '#9e9e9e'}
+                    />
+                    <SignalBar
+                      label={`A 映射强度 (${aPowerOut}/${maxPowerA})`}
+                      value={aMapped}
+                      maxValue={1}
+                      color={aActive ? '#2196f3' : '#9e9e9e'}
+                    />
+                    <SignalBar
+                      label={`B 原始值`}
+                      value={bRaw}
+                      maxValue={1}
+                      color={bActive ? '#4caf50' : '#9e9e9e'}
+                    />
+                    <SignalBar
+                      label={`B 映射强度 (${bPowerOut}/${maxPowerB})`}
+                      value={bMapped}
+                      maxValue={1}
+                      color={bActive ? '#ff9800' : '#9e9e9e'}
+                    />
+                  </Stack>
+                </Box>
+              )}
+
+              {oscRunning && history.length > 0 && (
+                <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 1 }}>
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    justifyContent="space-between"
+                    sx={{ cursor: 'pointer' }}
+                    onClick={() => setHistoryOpen(!historyOpen)}
+                  >
+                    <Typography variant="overline" color="text.secondary">
+                      OSC 消息历史（最近 {history.length} 条）
+                    </Typography>
+                    <IconButton size="small" edge="end">
+                      {historyOpen ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                    </IconButton>
+                  </Stack>
+                  <Collapse in={historyOpen}>
+                    <Box
+                      sx={{
+                        maxHeight: 160,
+                        overflow: 'auto',
+                        bgcolor: 'grey.900',
+                        borderRadius: 1,
+                        px: 1.5,
+                        py: 1,
+                        mt: 0.5,
+                      }}
+                    >
+                      {[...history].reverse().map((entry, i) => {
+                        const ts = new Date(entry.ts * 1000).toLocaleTimeString('zh-CN', { hour12: false });
+                        return (
+                          <Stack key={i} direction="row" spacing={1.5} alignItems="center" sx={{ py: 0.15 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace', minWidth: 65 }}>
+                              {ts}
+                            </Typography>
+                            <Typography
+                              variant="caption"
+                              fontWeight="bold"
+                              sx={{ minWidth: 16, color: entry.ch === 'A' ? 'info.light' : 'warning.light' }}
+                            >
+                              {entry.ch}
+                            </Typography>
+                            <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
+                              {entry.raw}
+                            </Typography>
+                          </Stack>
+                        );
+                      })}
+                    </Box>
+                  </Collapse>
+                </Box>
+              )}
 
               <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 1.5 }}>
                 <Typography variant="overline" color="text.secondary">OSC 参数</Typography>
@@ -119,7 +259,7 @@ export const OverviewOscStatus = (props) => {
                     Pattern A：{status.pattern_a} · Pattern B：{status.pattern_b}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    强度上限：A={status.max_power_a} B={status.max_power_b}
+                    强度上限：A={maxPowerA} B={maxPowerB}
                     {deviceConnected && ` · 当前：A=${status.current_pow_a} B=${status.current_pow_b}`}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">

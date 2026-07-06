@@ -1,19 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Box, Typography, useTheme } from '@mui/material';
 
-/**
- * Pattern 波形预览组件。
- * pattern: [[pulse_ms, pause_ms, amplitude], ...]，amplitude 范围 0-31
- * playing: 是否处于实时播放状态（影响进度条显示）
- */
-export const PatternPreview = ({ pattern, playing = false, height = 160 }) => {
+export const PatternPreview = ({ pattern, height = 160 }) => {
   const theme = useTheme();
   const canvasRef = useRef(null);
-  const [tick, setTick] = useState(0);
-  const rafRef = useRef(null);
-  const startTimeRef = useRef(null);
 
-  // 计算波形的累积时间序列
   const { segments, totalDuration } = useMemo(() => {
     if (!pattern || pattern.length === 0) {
       return { segments: [], totalDuration: 0 };
@@ -30,32 +21,6 @@ export const PatternPreview = ({ pattern, playing = false, height = 160 }) => {
     return { segments: segs, totalDuration: acc };
   }, [pattern]);
 
-  // 实时播放指针动画
-  useEffect(() => {
-    if (!playing || totalDuration === 0) {
-      startTimeRef.current = null;
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-      setTick(0);
-      return;
-    }
-
-    const loop = (ts) => {
-      if (startTimeRef.current === null) startTimeRef.current = ts;
-      const elapsed = (ts - startTimeRef.current) % totalDuration;
-      setTick(elapsed);
-      rafRef.current = requestAnimationFrame(loop);
-    };
-    rafRef.current = requestAnimationFrame(loop);
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    };
-  }, [playing, totalDuration]);
-
-  // 绘制波形
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -79,10 +44,9 @@ export const PatternPreview = ({ pattern, playing = false, height = 160 }) => {
     const padding = 8;
     const w = cssWidth - padding * 2;
     const h = cssHeight - padding * 2;
-    const baseY = padding + h; // 基线在底部
+    const baseY = padding + h;
     const maxAmp = 31;
 
-    // 网格线
     ctx.strokeStyle = theme.palette.divider;
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -93,7 +57,6 @@ export const PatternPreview = ({ pattern, playing = false, height = 160 }) => {
     }
     ctx.stroke();
 
-    // 绘制波形：每个 segment 用矩形表示脉冲（高度=amp），后面接 pause（高度=0）
     ctx.fillStyle = theme.palette.primary.main;
     for (const seg of segments) {
       const x1 = padding + (seg.start / totalDuration) * w;
@@ -101,18 +64,7 @@ export const PatternPreview = ({ pattern, playing = false, height = 160 }) => {
       const pulseH = (seg.amp / maxAmp) * h;
       ctx.fillRect(x1, baseY - pulseH, pulseW, pulseH);
     }
-
-    // 实时播放指针
-    if (playing) {
-      const px = padding + (tick / totalDuration) * w;
-      ctx.strokeStyle = theme.palette.error.main;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(px, padding);
-      ctx.lineTo(px, baseY);
-      ctx.stroke();
-    }
-  }, [segments, totalDuration, tick, playing, theme]);
+  }, [segments, totalDuration, theme]);
 
   return (
     <Box>
@@ -133,7 +85,7 @@ export const PatternPreview = ({ pattern, playing = false, height = 160 }) => {
         />
       </Box>
       <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
-        总时长: {totalDuration} ms · 状态: {playing ? '实时播放中' : '静态预览'}
+        总时长: {totalDuration} ms · 静态预览
       </Typography>
     </Box>
   );

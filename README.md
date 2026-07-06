@@ -69,14 +69,34 @@ VRChat 会在 `%LOCALAPPDATA%\Low\VRChat\VRChat\OSC\` 下为每个 avatar 生成
 
 - 修复 BOM 编码问题：使用 `utf-8-sig` 读取 VRC 生成的 json 文件
 - 修复参数地址解析：优先读取 `output.address`（完整 OSC 路径），而非 `name`
-- 前端 Auto Fetch 按钮弹窗列出所有本地 avatar
-- 仅显示 Float 类型参数，点击即自动填入对应通道
+- 前端 Auto Fetch 按钮弹窗列出所有本地 avatar，仅显示 Float 类型参数
+- 实时追踪当前穿戴的 avatar（通过 `/avatar/change` OSC 消息），回退到文件修改时间推测
+- 如 OGB/Orf 开头的参数未在列表中出现，提示用户手动填写
 
 ### Patterns 波形可视化
 
 - Patterns 卡片下方 Canvas 波形预览组件，每个 state（`[脉冲时长, 间隔, 幅度]`）以矩形高度直观呈现
-- 设备连接后红色播放指针循环扫过波形，表示当前正在按该波形输出
+- **静态预览**（去除了实时指针动画，减少视觉干扰）
 - **Pattern 中文名映射**：23 个波形名称中文化（震动/脉冲/呼吸/波浪/武器冲击/场景专用等类别）
+
+### 引导式新手指南 (Onboarding Wizard) 🧭
+
+- **逐步骤引导**：连接设备 → 填写 OSC 地址 → 选择波形 → 调节强度
+- 粒子动画欢迎页，渐入式交互，提升易用性
+- 所有字段与 WebUI 设置实时同步，引导完成后自动进入主界面
+
+### 实时 OSC 监控 (SSE)
+
+- `/api/coyote/osc_stream` 服务端推送实时原始值、滑动平均、映射后输出比例
+- 首页 OSC 状态卡片内嵌进度条展示 A/B 通道实时信号强度（raw / avg / mapped）
+- 20 条消息历史循环记录，方便诊断 OSC 通讯是否正常
+- OSC "运行中" vs "VRChat 已连接" 状态区分：收到信号前显示黄色等待，收到后变绿
+
+### 强度倍增器生效
+
+- 修复 `power_multiplier` 配置仅存储不生效的问题
+- `set_pwm` 路径现也应用 multiplier：`power = min(200, max_power × s × multiplier)`
+- 默认 multiplier 从 2.0 提升至 **6.0**（可在 settings.yaml 中自行调整）
 
 ### UI 全面汉化与改进
 
@@ -86,6 +106,7 @@ VRChat 会在 `%LOCALAPPDATA%\Low\VRChat\VRChat\OSC\` 下为每个 avatar 生成
 - 修复侧边栏左下角文字不可见问题
 - 侧边栏背景色随主题切换（浅色 `#1C2536`，深色 `#0B1220`）
 - **安全模式开关**：首页安全模式卡片，切换即时生效并持久化
+- **安全模式后端强制**：`POST /api/coyote/max_power` 安全模式下自动限制上限 100
 - **启动设备二次确认**：安全模式关闭时启动设备需确认弹窗，警告全功率输出风险
 - **蓝牙扫描进度指示**：连接按钮显示"连接中... 剩余 XX 秒"+ 进度条，40 秒超时提示
 - **GitHub 统计缓存降级**：localStorage 缓存 + 超时降级显示，避免阻塞初始化
@@ -95,7 +116,8 @@ VRChat 会在 `%LOCALAPPDATA%\Low\VRChat\VRChat\OSC\` 下为每个 avatar 生成
 
 - **聚合状态接口**：`/api/coyote/aggregate_status` 一次请求返回所有状态，减少前端轮询
 - **打包路径修复**：区分只读资源目录（`BASE_DIR`）和用户配置目录（`USER_DATA_DIR`），首次运行自动释放 settings.yaml
-- **进程模型重构**：uvicorn 作为 daemon 子进程，关闭窗口后 `os._exit(0)` 清理进程树
+- **进程模型重构**：uvicorn 作为 daemon 子进程，关闭窗口后 `kill → terminate` 超时等待优雅退出
+- **Avatar 运行时追踪**：监听 `/avatar/change` OSC 消息，实时记录当前穿戴 avatar ID
 - **代码清理**：删除空文件、未使用的 hook、constants.py 使用 BASE_DIR
 
 
@@ -145,7 +167,7 @@ python main.py
 | `coyote_addr_a` | `/avatar/parameters/EarLDis` | 通道 A 绑定的 OSC 参数地址（值需为 0–1 浮点） |
 | `coyote_addr_b` | `/avatar/parameters/EarRDis` | 通道 B 绑定的 OSC 参数地址 |
 | `coyote_max_power_a/b` | `100` | VRC 信号为 1.0 时设备的输出强度（0–200） |
-| `coyote_multiplier` | `2.0` | 振动强度到电刺激强度的转换系数 |
+| `coyote_multiplier` | `6.0` | 强度倍增系数。V2.0 起对 `set_pwm` 路径也生效：`min(200, max_power × s × multiplier)` |
 | `coyote_safe_mode` | `true` | 安全模式，限制最大输出为 100（约 50%）。**强烈建议保持开启** |
 | `start_limit` | `0.05` | 信号低于此值时完全断电 |
 | `min_limit` | `0.2` | 信号低于此值时保持 `min_power` |
@@ -208,13 +230,30 @@ python main.py
 
 - `src/pages/_app.js` — 主题与 ColorModeContext Provider
 - `src/contexts/color-mode-context.js` — 深浅色模式 Context
-- `src/components/pattern-preview.js` — Canvas 波形预览组件
+- `src/contexts/onboarding-context.js` — 新手指南 Context
+- `src/components/pattern-preview.js` — Canvas 静态波形预览组件
 - `src/sections/coyote/` — Coyote 控制台各卡片（status/address/pattern）
 - `src/sections/overview/` — 总览页（coyote/vrc/osc-status/safe-mode）
+- `src/features/onboarding/` — 引导式新手引导（欢迎页、步骤指示器）
 - `src/theme/` — MUI 主题，支持 light/dark 双模式
 - `src/layouts/dashboard/` — 侧边栏（含强度调节）、顶栏（含主题切换按钮）
 
 ## 版本历史
+
+### v2.0 (当前)
+
+- **引导式新手引导 (Onboarding Wizard)**：粒子动画欢迎页 → 连接设备 → OSC 地址 → 波形选择 → 强度调节，逐步骤引导新用户
+- **实时 OSC 监控 (SSE)**：`/api/coyote/osc_stream` 推送原始值/均值/映射值 + 消息历史，首页进度条实时显示
+- **OSC 状态区分**：yellow"等待 VRChat" / green"VRChat 已连接" / grey"未启动"
+- **Avatar 运行时追踪**：监听 `/avatar/change` 实时记录当前 avatar ID，不再仅依赖文件修改时间
+- **`power_multiplier` 失效修复**：multiplier 现对 `set_pwm` 路径也生效，默认从 2.0 提升到 **6.0**
+- **波形预览静态化**：去除了实时动画指针，减少视觉干扰
+- **引导页 Select 原生化**：使用 `native={true}` 消除下拉菜单卡顿
+- **安全模式后端强制**：`POST /api/coyote/max_power` 安全模式下自动限制上限 100
+- **Avatar ID 显示**：自动获取弹窗改为显示 avatar ID 而非模型名称
+- **OGB/Orf 参数提示**：未在列表中时提示用户手动填写
+- **进程优雅退出**：`os._exit(0)` → `kill(terminate)` 超时等待，不再暴力终止
+- **float 参数过滤限制**：仅显示 Float 类型参数
 
 ### v1.5
 

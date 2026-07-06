@@ -4,7 +4,7 @@
 # if `COYOTE_UID` is `None`, the program will try detactig cotoye automatically
 COYOTE_UID = "C9:9F:E4:2E:31:60"
 # Multiplier to translate between 0-100 vibration intensity and e-stim intensity.
-COYOTE_MULTIPLIER = 2.0
+COYOTE_MULTIPLIER = 6.0
 # Enable or disable safe mode. This caps the max e-stim output of the device. Warning: Don't touch unless you know what you're doing!
 COYOTE_SAFE_MODE = True
 COYOTE_MAX_POWER_A = 100
@@ -61,7 +61,7 @@ class Settings(BaseModel):
     # if `coyote_uid` is `None`, the program will try detactig cotoye automatically
     coyote_uid: str = "C9:9F:E4:2E:31:60"
     # Multiplier to translate between 0-100 vibration intensity and e-stim intensity.
-    coyote_multiplier: float = 2.0
+    coyote_multiplier: float = 6.0
     # Enable or disable safe mode. This caps the max e-stim output of the device. Warning: Don't touch unless you know what you're doing!
     coyote_safe_mode: bool = True
     coyote_max_power_a: int = 100

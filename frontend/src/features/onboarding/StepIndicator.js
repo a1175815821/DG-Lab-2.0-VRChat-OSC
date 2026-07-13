@@ -1,10 +1,16 @@
 import { motion } from 'framer-motion';
-import { Box } from '@mui/material';
+import { Box, useTheme } from '@mui/material';
 
 const steps = ['绑定地址', '连接设备', '调节强度', '选择波形'];
 
 export const StepIndicator = ({ currentStep }) => {
- 
+  const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
+  const inactiveBg = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)';
+  const activeText = isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.85)';
+  const inactiveText = isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)';
+  const inactiveLine = isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)';
+
   return (
     <Box
       sx={{
@@ -24,7 +30,7 @@ export const StepIndicator = ({ currentStep }) => {
             <motion.div
               animate={{
                 scale: isCurrent ? 1.3 : 1,
-                backgroundColor: isActive ? '#6366f1' : 'rgba(255,255,255,0.2)',
+                backgroundColor: isActive ? '#6366f1' : inactiveBg,
               }}
               transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
               style={{
@@ -38,7 +44,7 @@ export const StepIndicator = ({ currentStep }) => {
               component="span"
               sx={{
                 fontSize: 12,
-                color: isActive ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.4)',
+                color: isActive ? activeText : inactiveText,
                 fontWeight: isCurrent ? 600 : 400,
                 transition: 'all 0.3s ease',
               }}
@@ -50,7 +56,7 @@ export const StepIndicator = ({ currentStep }) => {
                 sx={{
                   width: 40,
                   height: 2,
-                  backgroundColor: index < currentStep ? '#6366f1' : 'rgba(255,255,255,0.15)',
+                  backgroundColor: index < currentStep ? '#6366f1' : inactiveLine,
                   borderRadius: 1,
                 }}
               />

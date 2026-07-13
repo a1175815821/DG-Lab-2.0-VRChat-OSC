@@ -55,9 +55,6 @@ export const CoyotePattern = () => {
   const [patternDetails, setPatternDetails] = useState({});
   const [patternA, setPatternA] = useState('');
   const [patternB, setPatternB] = useState('');
-  const [connected, setConnected] = useState(false);
-  const [signalA, setSignalA] = useState(undefined);
-  const [signalB, setSignalB] = useState(undefined);
   const [openSuccess, setOpenSuccess] = useState(false);
   const [openError, setOpenError] = useState(false);
   const [message, setMessage] = useState('');
@@ -120,16 +117,6 @@ export const CoyotePattern = () => {
     });
   }
 
-  const getStatus = () => {
-    axios.get('/api/coyote/status').then((res) => {
-      setConnected(!!res.data.is_connected);
-      handlePollingSuccess();
-    }).catch((err) => {
-      console.error(err);
-      handlePollingError();
-    });
-  }
-
   const handleCloseSuccess = (event, reason) => {
     if (reason === 'clickaway') return;
     setOpenSuccess(false);
@@ -144,23 +131,6 @@ export const CoyotePattern = () => {
     getPatternList();
     getPatternDetails();
     getPattern();
-    getStatus();
-    const id = setInterval(getStatus, 2000);
-    return () => clearInterval(id);
-  }, []);
-
-  // SSE 实时信号数值
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const es = new EventSource('/api/coyote/osc_stream');
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        setSignalA(data.a?.raw);
-        setSignalB(data.b?.raw);
-      } catch (e) { /* ignore */ }
-    };
-    return () => es.close();
   }, []);
 
   // 当前选中的 pattern 取首个变体。
@@ -214,8 +184,6 @@ export const CoyotePattern = () => {
                 <Typography variant="subtitle2" sx={{ mb: 1 }}>A 通道预览</Typography>
                 <PatternPreview
                   pattern={getFirstVariant(patternA)}
-                  playing={connected}
-                  signalValue={connected ? signalA : undefined}
                 />
               </Box>
             </Stack>
@@ -242,8 +210,6 @@ export const CoyotePattern = () => {
                 <Typography variant="subtitle2" sx={{ mb: 1 }}>B 通道预览</Typography>
                 <PatternPreview
                   pattern={getFirstVariant(patternB)}
-                  playing={connected}
-                  signalValue={connected ? signalB : undefined}
                 />
               </Box>
             </Stack>

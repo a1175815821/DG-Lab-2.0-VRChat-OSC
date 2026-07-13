@@ -1,9 +1,9 @@
 {
   "name": "osc-toys",
-  "version": "3.0.0",
-  "author": "Sakura0721",
-  "licence": "MIT",
-  "homepage": "https://github.com/Sakura0721/osc-toys",
+  "version": "3.1.0",
+  "author": "a1175815821",
+  "license": "MIT",
+  "homepage": "https://github.com/a1175815821/DG-Lab-2.0-VRChat-OSC",
   "private": false,
   "proxy": "http://127.0.0.1:38080",
   "scripts": {

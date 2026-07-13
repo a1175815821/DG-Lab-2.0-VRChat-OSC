@@ -14,7 +14,6 @@ from toys.estim.coyote.dg_interface import CoyoteInterface
 from toys.estim.coyote import dg_interface as dgi
 from pythonosc.dispatcher import Dispatcher
 from pythonosc import osc_server
-from fastapi import BackgroundTasks
 
 
 router = APIRouter(prefix="/api/coyote")
@@ -56,6 +55,15 @@ def _check_power_lock_timeout():
         if time.time() - dgi._can_update_power_set_time > _POWER_LOCK_TIMEOUT:
             settings.can_update_power = True
             logging.warning("can_update_power 超时未恢复，已自动重置为 True")
+
+
+def _get_patterns() -> Dict[str, Any]:
+    """获取 pattern 字典。优先用已有 ci（启动时已从磁盘加载），无需设备连接。"""
+    if ci is not None and getattr(ci, "patterns", None):
+        return ci.patterns
+    return CoyoteInterface(
+        device_uid="", power_multiplier=1.0, safe_mode=True
+    ).patterns
 
 
 # ─── OSC 信号处理 ─────────────────────────────────────────────────────────
@@ -160,7 +168,10 @@ def coyote_handler_a(addr, args, dis):
             asyncio.ensure_future(ci.set_pwm(0, -1), loop=asyncio.get_event_loop())
         else:
             latest_mapped_a = s
-            power = min(200, int(settings.coyote_max_power_a * s * settings.coyote_multiplier))
+            # power = max_power × mapped_signal × multiplier（默认 multiplier=1.0，滑块 1:1）
+            # 安全模式下强制裁剪到 100，避免 multiplier 导致越界
+            safe_limit = 100 if settings.coyote_safe_mode else 200
+            power = min(safe_limit, int(settings.coyote_max_power_a * s * settings.coyote_multiplier))
             asyncio.ensure_future(
                 ci.set_pwm(power, -1), loop=asyncio.get_event_loop()
             )
@@ -194,7 +205,8 @@ def coyote_handler_b(addr, args, dis):
             asyncio.ensure_future(ci.set_pwm(-1, 0), loop=asyncio.get_event_loop())
         else:
             latest_mapped_b = s
-            power = min(200, int(settings.coyote_max_power_b * s * settings.coyote_multiplier))
+            safe_limit = 100 if settings.coyote_safe_mode else 200
+            power = min(safe_limit, int(settings.coyote_max_power_b * s * settings.coyote_multiplier))
             asyncio.ensure_future(
                 ci.set_pwm(-1, power), loop=asyncio.get_event_loop()
             )
@@ -258,7 +270,6 @@ async def start_signal_output():
 
 
 async def start_channel_a():
-    print(ci.patterns[settings.coyote_pattern_a])
     await ci.signal(
         power=int(settings.coyote_max_power_a * settings.min_power),
         pattern_name=settings.coyote_pattern_a,
@@ -268,7 +279,6 @@ async def start_channel_a():
 
 
 async def start_channel_b():
-    print(ci.patterns[settings.coyote_pattern_b])
     await ci.signal(
         power=int(settings.coyote_max_power_b * settings.min_power),
         pattern_name=settings.coyote_pattern_b,
@@ -283,7 +293,7 @@ class StartRequest(BaseModel):
 
 
 @router.post("/start")
-async def start_coyote(req: StartRequest, background_tasks: BackgroundTasks):
+async def start_coyote(req: StartRequest):
     """连接 Coyote 设备并启动信号输出。OSC 监听已独立运行，无需在此启动。"""
     global ci, _signal_task
     if ci is not None and ci.is_connected:
@@ -299,7 +309,7 @@ async def start_coyote(req: StartRequest, background_tasks: BackgroundTasks):
         await ci.search_for_device()
     await ci.connect(retries=3)
     # 只启动信号输出，OSC 监听已在应用启动时独立运行
-    background_tasks.add_task(start_signal_output)
+    _signal_task = asyncio.create_task(start_signal_output())
     return {"msg": "starting"}
 
 
@@ -307,8 +317,11 @@ async def start_coyote(req: StartRequest, background_tasks: BackgroundTasks):
 async def stop_coyote():
     """停止设备并断开蓝牙。OSC 监听保持运行，不影响后续重连。"""
     global transport, _signal_task
-    if not ci.is_connected:
+    if ci is None or not ci.is_connected:
         return {"msg": "not started"}
+    if _signal_task is not None:
+        _signal_task.cancel()
+        _signal_task = None
     await ci.stop()
     await ci.disconnect()
     # 不关闭 OSC transport，保持监听
@@ -322,22 +335,26 @@ class UpdatePowerRequest(BaseModel):
 
 @router.post("/max_power")
 async def update_max_power(req: UpdatePowerRequest):
-    """设置 A/B 通道最大强度。安全模式下上限强制 100。"""
+    """设置 A/B 通道最大强度。安全模式下上限强制 100。未连接设备时仅持久化配置。"""
     try:
         safe_limit = 100 if settings.coyote_safe_mode else 200
         pow_a = min(req.pow_a, safe_limit)
         pow_b = min(req.pow_b, safe_limit)
-        if settings.coyote_max_power_a != 0:
-            percentage_a = ci.pow_a / settings.coyote_max_power_a
+        if ci is not None and ci.is_connected:
+            if settings.coyote_max_power_a != 0:
+                percentage_a = ci.pow_a / settings.coyote_max_power_a
+            else:
+                percentage_a = 0.5
+            if settings.coyote_max_power_b != 0:
+                percentage_b = ci.pow_b / settings.coyote_max_power_b
+            else:
+                percentage_b = 0.5
+            settings.coyote_max_power_a = pow_a
+            settings.coyote_max_power_b = pow_b
+            await ci.set_pwm(int(percentage_a * pow_a), int(percentage_b * pow_b))
         else:
-            percentage_a = 0.5
-        if settings.coyote_max_power_b != 0:
-            percentage_b = ci.pow_b / settings.coyote_max_power_b
-        else:
-            percentage_b = 0.5
-        settings.coyote_max_power_a = pow_a
-        settings.coyote_max_power_b = pow_b
-        await ci.set_pwm(int(percentage_a * pow_a), int(percentage_b * pow_b))
+            settings.coyote_max_power_a = pow_a
+            settings.coyote_max_power_b = pow_b
         settings.dump()
         return {"msg": "success", "max_power_a": pow_a, "max_power_b": pow_b}
     except Exception as e:
@@ -432,9 +449,9 @@ async def get_osc_addr():
 
 @router.get("/patterns")
 async def get_patterns():
-    """获取 patterns 列表。"""
+    """获取 patterns 列表。从磁盘加载，无需设备已连接。"""
     try:
-        return {"patterns": list(ci.patterns.keys())}
+        return {"patterns": list(_get_patterns().keys())}
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
@@ -443,9 +460,9 @@ async def get_patterns():
 
 @router.get("/patterns/detail")
 async def get_patterns_detail():
-    """返回所有 patterns 的详细波形数据。"""
+    """返回所有 patterns 的详细波形数据。无需设备已连接。"""
     try:
-        return {"patterns": ci.patterns}
+        return {"patterns": _get_patterns()}
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
@@ -459,15 +476,19 @@ class UpdatePatternRequest(BaseModel):
 
 @router.post("/pattern")
 async def update_pattern(req: UpdatePatternRequest):
-    """设置 A/B 通道 pattern。"""
+    """设置 A/B 通道 pattern。未连接设备时仅持久化配置。"""
     try:
-        if req.pattern_a in ci.patterns.keys():
+        patterns = _get_patterns()
+        if req.pattern_a in patterns.keys():
             settings.coyote_pattern_a = req.pattern_a
-            ci.pattern_name_a = req.pattern_a
-        if req.pattern_b in ci.patterns.keys():
+            if ci is not None:
+                ci.pattern_name_a = req.pattern_a
+        if req.pattern_b in patterns.keys():
             settings.coyote_pattern_b = req.pattern_b
-            ci.pattern_name_b = req.pattern_b
-        ci.switch_pattern = True
+            if ci is not None:
+                ci.pattern_name_b = req.pattern_b
+        if ci is not None and ci.is_connected:
+            ci.switch_pattern = True
         settings.dump()
         return {"msg": "success"}
     except Exception as e:
@@ -512,30 +533,6 @@ async def get_status():
         )
 
 
-@router.get("/osc_status")
-async def get_osc_status():
-    """获取 OSC 链接状态。"""
-    try:
-        now = time.time()
-        a_active = cur_time_a is not None and (now - cur_time_a) < 2.0
-        b_active = cur_time_b is not None and (now - cur_time_b) < 2.0
-        return {
-            "osc_running": transport is not None,
-            "a_active": a_active,
-            "b_active": b_active,
-            "a_last_signal": cur_time_a,
-            "b_last_signal": cur_time_b,
-            "addr_a": settings.coyote_addr_a,
-            "addr_b": settings.coyote_addr_b,
-            "vrc_host": settings.vrc_host,
-            "vrc_osc_port": settings.vrc_osc_port,
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
-        )
-
-
 @router.get("/aggregate_status")
 async def get_aggregate_status():
     """聚合状态接口：一次请求返回设备状态 + OSC 状态 + 强度 + 安全模式。
@@ -570,6 +567,7 @@ async def get_aggregate_status():
             "max_power_b": settings.coyote_max_power_b,
             "current_pow_a": ci.pow_a if device_connected else 0,
             "current_pow_b": ci.pow_b if device_connected else 0,
+            "multiplier": settings.coyote_multiplier,
             # 安全模式
             "safe_mode": settings.coyote_safe_mode,
             # pattern

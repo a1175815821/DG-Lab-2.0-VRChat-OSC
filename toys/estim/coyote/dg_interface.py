@@ -58,12 +58,8 @@ import toys.estim.coyote.dg_encoding as dg_encoding
 import logging
 import time
 import asyncio
-from toys.base import FEATURE_ESTIM
 from toys.estim.estim import Estim
-import random
-from common.util import *
 from settings import settings
-import copy
 
 # can_update_power 超时兜底：记录 set_pwm 设置 can_update_power=False 的时间
 # coyote.py 的 _check_power_lock_timeout 会读取此变量判断是否超时
@@ -81,7 +77,7 @@ class CoyoteInterface(Estim):
         power_multiplier (float): Regulates how powerful the e-stim scales compared to "vibration strength". Higher
                             values means stronger stimulation. Be careful!
         default_channel (str): Set default output channel, either "a" or "b".
-        safe_mode (bool): Caps e-stim device power output to max 37.5 % of total capacity. Don't turn off unless you know
+        safe_mode (bool): Caps e-stim device power output to max 100 (50% of 0-200 range). Don't turn off unless you know
                             what you are doing! See self.set_pwm() for implementation details.
     """
 
@@ -92,7 +88,7 @@ class CoyoteInterface(Estim):
     def __init__(
         self,
         device_uid="C9:9F:E4:2E:31:60",
-        power_multiplier=7.68,
+        power_multiplier=1.0,
         default_channel="a",
         safe_mode=True,
     ):
@@ -115,7 +111,7 @@ class CoyoteInterface(Estim):
             )
         else:
             # attempt to find device automatically if device_uid left blank.
-            print("Coyote UID was left blank. Trying to find the device automatically.")
+            logging.info("Coyote UID was left blank. Trying to find the device automatically.")
             self.device = None
 
         # Bluetooth characteristic placeholders; populated in self.connect()
@@ -133,24 +129,16 @@ class CoyoteInterface(Estim):
         # You can override the default output channel with self.signal()
         self.default_channel = default_channel
 
-        # Multiplier to map 0-600 to the range accepted by the e-stim box, required for self.vibrate() compatibility.
-        #
-        # Theoretically, one could translate the range 0-600 vibration strength to the e-stim box's entire 0-2047
-        # intensity range. In practice, however, I doubt most people are comfortable with intensities above 1024!
-        # This multiplier has a conservative default value, but can be easily changed by the user on instantiation with
-        # ci = CoyoteInterface(... power_multiplier = <your value here>, ...).
-        # todo: What is the range of possible "vibration strength" values from from SKI? 0-100? 0-300? 0-600?
-        # This multiplier assumes a max vibration strength of 600, as per SkyrimToyInterface-alpha3.py
-        # 600 max vibration strength * 1.28 power multiplier == 37 % max e-stim intensity (768 out of 2047).
+        # Multiplier applied to mapped signal: power = min(safe_limit, max_power * signal * multiplier)
+        # Default 1.0 so the UI max-power slider maps 1:1 at full signal.
         self.power_multiplier = power_multiplier
 
         # Flag to indicate connection status
-        # fixme: Use self.device.is_connected instead?
         self.is_connected = False
 
-        # Flag: Cap power intensity to 900 out of 2047 (roughly 44 %) for safety reasons. The limit is enforced in
+        # Flag: Cap power intensity to 100 (out of 0-200) for safety reasons. The limit is enforced in
         # the self.set_pwm() method.
-        # Do not disable you're unless absolutely certain that you know what you are doing!
+        # Do not disable unless absolutely certain that you know what you are doing!
         self.safe_mode = safe_mode
 
         # todo: import patterns from patterns.json and choose according to type of in-game event
@@ -171,14 +159,6 @@ class CoyoteInterface(Estim):
     #
     # Internal methods
     #
-
-    def _get_pwm(self) -> Tuple[int, int]:  # return pow_a, pow_b
-        """
-        Return tuple of current power level of channel a and channel b.
-        :rtype: (int, int)
-        """
-        # todo
-        raise NotImplementedError()
 
     async def set_pwm(self, pow_a: int, pow_b: int):
         """
@@ -245,26 +225,6 @@ class CoyoteInterface(Estim):
         """
         return sum([x[0] + x[1] for x in pattern])
 
-    def _truncate_pattern(self, duration: int, pattern: list) -> list:
-        """
-        Shorten pattern if it is too long for a given duration.
-
-        :param duration: Intended duration (ms) as given as parameter to vibrate function.
-        :param pattern: Pattern which is longer than duration (ms).
-        :return: A shortened pattern which is not longer than duration.
-        """
-        # todo
-        raise NotImplementedError
-
-    def _debug(self, strength: int = 256, duration: int = 10, step: int = 1):
-        """
-        Debug/testing function, please disregard.
-        """
-        # ramp up power slowly to detect weird discontinuities
-        for i in range(strength, 1995, step):
-            print(i)
-            self.vibrate(duration, i)
-
     #
     # User-facing functions
     #
@@ -276,7 +236,7 @@ class CoyoteInterface(Estim):
         self.device_uid = None
         self.device_alias = "D-LAB ESTIM01"
 
-        print("Scanning for Bluetooth devices.")
+        logging.info("Scanning for Bluetooth devices.")
         self.scanner = bleak.BleakScanner()
         bluetooth_devices = await self.scanner.discover(timeout=10)
 
@@ -296,13 +256,13 @@ class CoyoteInterface(Estim):
                 if bluetooth_device.name == self.device_alias:
                     # If we've already found one Coyote device, skip additional devices with same alias.
                     if self.device_uid:
-                        print(
-                            f"WARNING: More than one Coyote was found. Skipping subsequent device: {bluetooth_device.name}"
+                        logging.warning(
+                            f"More than one Coyote was found. Skipping subsequent device: {bluetooth_device.name}"
                         )
                     else:
                         # Save UUID of found device to self.device_uid and instantiate BLEAK as normal.
                         self.device_uid = bluetooth_device.address
-                        print(f"Coyote found! UUID: {self.device_uid}")
+                        logging.info(f"Coyote found! UUID: {self.device_uid}")
                         self.device = bleak.BleakClient(
                             self.device_uid, timeout=settings.coyote_connect_timeout
                         )
@@ -320,7 +280,7 @@ class CoyoteInterface(Estim):
         :param retries: Indicates the number of attempts to connect before raising an exception and halting the program.
         """
 
-        print("Connecting to device: {} ...".format(self.device_uid))
+        logging.info("Connecting to device: {} ...".format(self.device_uid))
 
         saved_exception = ConnectionError
         if not self.device.is_connected:
@@ -328,12 +288,12 @@ class CoyoteInterface(Estim):
                 # Catch time-out errors while we retry
                 try:
                     self.is_connected = await self.device.connect()
-                    print("Connected!")
+                    logging.info("Connected!")
                     break
                 except Exception as e:
                     # Overwrite generic ConnectionError with actual exception
                     saved_exception = e
-                    print(traceback.format_exc())
+                    logging.error(traceback.format_exc())
                     logging.error(
                         f"Caught TimeoutError or CancelledError exception. Retrying... {type(e)}: {e}"
                     )
@@ -402,12 +362,12 @@ class CoyoteInterface(Estim):
         # Test connectivity
         # Read the unit power level (%)
         logging.info("Querying battery level...")
-        print(self._battery_level.uuid)
+        logging.info(f"Battery level characteristic: {self._battery_level.uuid}")
         battery_level = await self.device.read_gatt_char(self._battery_level.uuid)
 
         # Convert from bytearray to hex to decimal
         battery_level_dec = int(battery_level.hex(), 16)
-        print("Current device battery level: ", battery_level_dec)
+        logging.info(f"Current device battery level: {battery_level_dec}")
         self.battery = battery_level_dec
 
         # write output power = 0 to device
@@ -426,7 +386,7 @@ class CoyoteInterface(Estim):
 
         if output == message:
             logging.info("Read: channels strength == {}".format(output))
-            print("Device read/write functionality confirmed.\nReady!")
+            logging.info("Device read/write functionality confirmed.\nReady!")
         else:
             logging.error("Device read/write functionality could not be confirmed.")
 
@@ -438,13 +398,13 @@ class CoyoteInterface(Estim):
         if not self.is_connected:
             return
 
-        print("Disconnecting...")
+        logging.info("Disconnecting...")
         self.stop_signal = True
         self.is_connected = False
         output = await self.device.disconnect()
 
         if not self.device.is_connected:
-            print("Disconnected!")
+            logging.info("Disconnected!")
 
     async def get_bettery_level(self) -> int:
         """Get battery level."""
@@ -517,15 +477,13 @@ class CoyoteInterface(Estim):
 
                 # info("cur time = {}, end time = {}".format(cur_time, end_time))
                 if cur_time >= end_time:
-                    info("Shock - Hit time limit, stopping")
+                    logging.info("Shock - Hit time limit, stopping")
                     break
                 if self.stop_signal:
-                    print("ret1")
                     return
                 # Check to see if power output has been reduced to zero once per second
                 if cur_time - last_power_check > 1.0:
                     if not await self.is_running():
-                        print("ret2")
                         return
                     last_power_check = time.time()
                 # unpack pattern values
@@ -558,8 +516,7 @@ class CoyoteInterface(Estim):
             output = await self.device.read_gatt_char(self._pwm_ab2)
             pass
         except Exception as e:
-            print(e)
-            print("Reconnecting...")
+            logging.error(f"{e}\nReconnecting...")
             await self.connect()
             return False
         # If power is 0, stop() has been called outside this function.
@@ -568,51 +525,6 @@ class CoyoteInterface(Estim):
         # if output == bytearray(b'\x00\x00\x00'):
         #     return False
         return True
-
-    def convert_power_vibrate(self, strength: int):
-        min_power = 1
-        max_power = 200
-        vibrateRange = 100 - 0
-        stimRange = max_power - min_power
-        # cast float to integer for compatibility with func.
-        return int((((strength - 0) * stimRange) / vibrateRange) + min_power)
-
-    async def shock(self, duration: int, strength: int, pattern="", toys=[]):  #
-        """
-        Method for compatibility with SkyrimToyInterface. Send a "vibration" signal of given duration and strength.
-
-        :param duration: Vibration duration in milliseconds (ms).
-        :param strength: Vibration strength (0 <= x <= 100).
-        :param pattern: The pattern to shock with.
-        """
-        info(
-            "duration = "
-            + str(duration)
-            + ", strength="
-            + str(strength)
-            + ", pattern="
-            + pattern
-        )
-        # Vibration already in progress
-        if await self.is_running():
-            await self.stop()
-            timeout = 0
-            while await self.is_running() and timeout < 30:
-                await asyncio.sleep(0.1)
-                timeout += 1
-        if not pattern in self.patterns:
-            fail("Pattern {} not found - Using default")
-            pattern = ""
-        pattern = random.choice(self.patterns[pattern])
-        await self.signal(
-            power=self.convert_power_vibrate(strength),
-            # todo: Different patterns corresponding to in-game events.
-            pattern=pattern,
-            duration=(duration * 1000),
-            channel="a",
-        )  # [toy['id'] for toy in toys])
-        # Set power back to zero after event is done.
-        await self.stop()
 
     async def stop(self):
         """
@@ -624,92 +536,3 @@ class CoyoteInterface(Estim):
             return
         self.stop_signal = True
         await self.set_pwm(0, 0)
-
-    async def check_in(self):
-        return await self.is_running()
-
-    def get_toys(self):
-        toy_a = {
-            "name": "DG-Lab",
-            "interface": self.properties["name"],
-            "id": "a",
-            "battery": self.battery,
-            "enabled": True,
-        }
-        toy_b = copy.copy(toy_a)
-        toy_b["id"] = "b"
-        toy_b["name"] = "DG-Lab (B)"
-
-        return {
-            toy_a["name"]: toy_a  # ,
-            # toy_b['name']: toy_b
-        }
-
-
-if __name__ == "__main__":
-    """Execute this file directly to test functionality without SkyrimToyInterface/game integration."""
-
-    # enable INFO level of logging
-    logging.basicConfig(level=logging.INFO)
-
-    ci = CoyoteInterface(
-        device_uid="C1:A9:D8:0C:CB:1D",  # These arguments are identical to the class defaults and
-        # are for demonstration only.
-        power_multiplier=1.28,
-        safe_mode=True,
-    )
-
-    # connect to device
-    ci.connect(retries=10)
-    # # uncomment the following to enable e-stim testing without integration into SKI/TES:V.
-    # # USE AT YOUR OWN RISK. USE RESPONSIBLY. SEE DISCLAIMER ABOVE.
-
-    # # Stimulate five seconds (5000 ms) at 200 vibration strength * 1.28 == 12.5 % e-stim intensity
-    # # e-stim intensity is calculated based on the power_multiplier, like so:
-    # # vibration strength * power_multiplier == 200 * 1.28 == 256 (out of 2047) == 12.5 % e-stim intensity
-    # ci.vibrate(5000, 200)
-    #
-    # # sleep five seconds
-    # time.sleep(5)
-    #
-    # # Stimulate five seconds at 300 vibration strength * 1.28 == 18.75 % e-stim intensity.
-    # # 300 * 1.28 == 384 (out of 2047) == 18.75 % e-stim intensity.
-    # ci.vibrate(5000, 300)
-    #
-    # # sleep five seconds
-    # time.sleep(5)
-    #
-    #
-    # # You can also provide more detailed e-stim commands directly.
-    # # Here we stimulate six seconds at 341 (out of 2047) == 16 % e-stim intensity.
-    # # Note that the "power" argument corresponds directly to the e-stim device's internal 0-2047 range and is NOT
-    # # translated like in ci.vibrate().
-    # # Max allowed e-stim intensity is capped at 37.5 % (768 out of 2047) when the ci.safe_mode flag is set.
-    # #
-    # ci.signal(power=341,
-    #           pattern=[
-    #                 [1, 9, 10],
-    #                 [2, 8, 10],
-    #                 [3, 7, 10],
-    #                 [4, 6, 10],
-    #                 [5, 5, 10],
-    #                 [6, 4, 10],
-    #                 [7, 3, 10],
-    #                 [8, 2, 10],
-    #                 [9, 1, 10],
-    #                 [1, 0, 10]],
-    #           duration=6000,
-    #           channel="a")
-    #
-    # # Currently just two placeholder patterns are available, but you can add your own:
-    # print(ci.patterns)
-    #
-    # # sleep five seconds
-    # time.sleep(5)
-    #
-    # # finally, this removes the power intensity safeguard (be very careful with ci.vibrate() & ci.signal()
-    # # from now on!):
-    # ci.safe_mode = False
-    #
-    # ci.stop()
-    # ci.disconnect()

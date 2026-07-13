@@ -32,6 +32,8 @@ export const OverviewCoyote = (props) => {
 
   useEffect(() => {
     getStatus();
+    const id = setInterval(getStatus, 3000);
+    return () => clearInterval(id);
   }, []);
 
   return (
@@ -105,6 +107,6 @@ export const OverviewCoyote = (props) => {
   );
 };
 
-OverviewCoyote.prototypes = {
+OverviewCoyote.propTypes = {
   sx: PropTypes.object
 };

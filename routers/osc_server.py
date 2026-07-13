@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
-from routers.coyote import ci, serve_osc
+from routers.coyote import serve_osc
 from settings import settings
 
 

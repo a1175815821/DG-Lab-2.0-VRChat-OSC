@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useEffect, useState } from 'react';
 import axios from 'axios';
 import {
   Alert,
@@ -7,16 +7,13 @@ import {
   CardActions,
   CardContent,
   CardHeader,
-  Checkbox,
   Divider,
-  FormControlLabel,
   Snackbar,
   Stack,
   TextField,
   Typography,
   Unstable_Grid2 as Grid
 } from '@mui/material';
-import { useEffect } from 'react';
 
 export const OverviewVRC = () => {
 
@@ -28,7 +25,13 @@ export const OverviewVRC = () => {
   const [message, setMessage] = useState('');
 
   const updateOscAddress = () => {
-    const data = { "host": vrcHost, "port": vrcPort };
+    const portNum = parseInt(vrcPort, 10);
+    if (Number.isNaN(portNum) || portNum < 1 || portNum > 65535) {
+      setMessage('端口必须是 1-65535 的数字');
+      setOpenError(true);
+      return;
+    }
+    const data = { "host": vrcHost, "port": portNum };
     axios.post('/api/osc_server/address', data).then((res) => {
       setOpenSuccess(true);
     }).catch((err) => {
@@ -100,10 +103,9 @@ export const OverviewVRC = () => {
             </Stack>
           </Grid>
           <Grid
-            item
-            md={4}
-            sm={6}
             xs={12}
+            sm={6}
+            md={4}
           >
             <Stack spacing={1}>
               <Typography variant="h6">

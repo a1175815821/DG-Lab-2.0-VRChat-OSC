@@ -13,6 +13,8 @@ develop-eggs/
 dist/
 downloads/
 eggs/
+osc-toys-release/
+release_windows_x64.zip
 .eggs/
 lib/
 lib64/

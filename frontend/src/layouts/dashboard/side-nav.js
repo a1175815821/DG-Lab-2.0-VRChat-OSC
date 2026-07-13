@@ -17,11 +17,11 @@ import {
   useMediaQuery,
   useTheme
 } from '@mui/material';
-import { Logo } from 'src/components/logo';
 import { Scrollbar } from 'src/components/scrollbar';
 import { items } from './config';
 import { SideNavItem } from './side-nav-item';
 import { useState, useEffect, useRef } from 'react';
+import { useOnboarding } from 'src/contexts/onboarding-context';
 import GitHubIcon from '@mui/icons-material/GitHub';
 import StarBorderRoundedIcon from '@mui/icons-material/StarBorderRounded';
 import CallSplitRoundedIcon from '@mui/icons-material/CallSplitRounded';
@@ -30,6 +30,7 @@ import MonitorHeartOutlinedIcon from '@mui/icons-material/MonitorHeartOutlined';
 export const SideNav = (props) => {
   const { open, onClose } = props;
   const pathname = usePathname();
+  const { reopenOnboarding } = useOnboarding();
   const theme = useTheme();
   const lgUp = useMediaQuery((theme) => theme.breakpoints.up('lg'));
   const isDark = theme.palette.mode === 'dark';
@@ -41,6 +42,8 @@ export const SideNav = (props) => {
   const [maxPowerA, setMaxPowerA] = useState(0);
   const [maxPowerB, setMaxPowerB] = useState(0);
   const [powerHint, setPowerHint] = useState('');
+  // 安全模式：限制滑块上限为 100，否则 200
+  const [safeMode, setSafeMode] = useState(true);
 
   // OSC 链接状态：osc_running / a_active / b_active
   const [oscRunning, setOscRunning] = useState(false);
@@ -85,6 +88,7 @@ export const SideNav = (props) => {
       setBActive(!!res.data.b_active);
       setMaxPowerA(res.data.max_power_a);
       setMaxPowerB(res.data.max_power_b);
+      setSafeMode(!!res.data.safe_mode);
       failCountRef.current = 0;
       setServerError(false);
     }).catch((err) => {
@@ -119,6 +123,8 @@ export const SideNav = (props) => {
 
   // 侧边栏背景色：深色模式下用更深的色调，浅色模式下用品牌色 indigo 的深色变体
   const sideBg = isDark ? '#0B1220' : '#1C2536';
+  // 滑块上限：安全模式 100，否则 200
+  const powerMax = safeMode ? 100 : 200;
   const sideColor = 'common.white';
   const mutedColor = isDark ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.75)';
   const dimColor = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.55)';
@@ -161,13 +167,13 @@ export const SideNav = (props) => {
                 color="inherit"
                 variant="subtitle1"
               >
-                OSC Toys
+                DG-Lab 2.0
               </Typography>
               <Typography
                 sx={{ color: dimColor }}
                 variant="body2"
               >
-                玩具 VRC 插件
+                VRChat OSC
               </Typography>
             </div>
             <SvgIcon
@@ -201,7 +207,7 @@ export const SideNav = (props) => {
             </Stack>
           </Stack>
           <Typography sx={{ color: dimColor, fontSize: 11, mb: 1 }}>
-            松开滑块或回车自动保存（0-200）
+            满信号时的输出上限（0–200，默认 1:1）。松开或回车保存。
           </Typography>
 
           <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
@@ -222,7 +228,7 @@ export const SideNav = (props) => {
               value={maxPowerA}
               onChange={(e, v) => setMaxPowerA(v)}
               onChangeCommitted={(e, v) => saveMaxPower(v, maxPowerB)}
-              max={200}
+              max={powerMax}
               size="small"
               sx={{ color: 'primary.main', flex: 1 }}
             />
@@ -230,12 +236,12 @@ export const SideNav = (props) => {
               value={maxPowerA}
               onChange={(e) => {
                 const v = parseInt(e.target.value, 10);
-                if (!Number.isNaN(v)) setMaxPowerA(Math.min(200, Math.max(0, v)));
+                if (!Number.isNaN(v)) setMaxPowerA(Math.min(powerMax, Math.max(0, v)));
                 else setMaxPowerA(0);
               }}
               onBlur={() => saveMaxPower(maxPowerA, maxPowerB)}
               onKeyDown={(e) => { if (e.key === 'Enter') saveMaxPower(maxPowerA, maxPowerB); }}
-              inputProps={{ min: 0, max: 200, style: { color: '#fff', textAlign: 'center', padding: '2px 4px', fontSize: 12 } }}
+              inputProps={{ min: 0, max: powerMax, style: { color: '#fff', textAlign: 'center', padding: '2px 4px', fontSize: 12 } }}
               variant="standard"
               sx={{ width: 44, '.MuiInput-root:before': { borderBottomColor: 'rgba(255,255,255,0.3)' } }}
             />
@@ -259,7 +265,7 @@ export const SideNav = (props) => {
               value={maxPowerB}
               onChange={(e, v) => setMaxPowerB(v)}
               onChangeCommitted={(e, v) => saveMaxPower(maxPowerA, v)}
-              max={200}
+              max={powerMax}
               size="small"
               sx={{ color: 'primary.main', flex: 1 }}
             />
@@ -267,12 +273,12 @@ export const SideNav = (props) => {
               value={maxPowerB}
               onChange={(e) => {
                 const v = parseInt(e.target.value, 10);
-                if (!Number.isNaN(v)) setMaxPowerB(Math.min(200, Math.max(0, v)));
+                if (!Number.isNaN(v)) setMaxPowerB(Math.min(powerMax, Math.max(0, v)));
                 else setMaxPowerB(0);
               }}
               onBlur={() => saveMaxPower(maxPowerA, maxPowerB)}
               onKeyDown={(e) => { if (e.key === 'Enter') saveMaxPower(maxPowerA, maxPowerB); }}
-              inputProps={{ min: 0, max: 200, style: { color: '#fff', textAlign: 'center', padding: '2px 4px', fontSize: 12 } }}
+              inputProps={{ min: 0, max: powerMax, style: { color: '#fff', textAlign: 'center', padding: '2px 4px', fontSize: 12 } }}
               variant="standard"
               sx={{ width: 44, '.MuiInput-root:before': { borderBottomColor: 'rgba(255,255,255,0.3)' } }}
             />
@@ -341,6 +347,15 @@ export const SideNav = (props) => {
             py: 3
           }}
         >
+          <Button
+            fullWidth
+            size="small"
+            variant="outlined"
+            onClick={reopenOnboarding}
+            sx={{ mb: 2, color: 'common.white', borderColor: 'rgba(255,255,255,0.3)' }}
+          >
+            重新打开新手引导
+          </Button>
           <Typography
             sx={{ color: 'common.white' }}
             variant="subtitle2"

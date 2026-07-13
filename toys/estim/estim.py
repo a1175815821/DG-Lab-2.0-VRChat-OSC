@@ -1,10 +1,7 @@
 from typing import Dict, Any
 from toys.base import Toy, FEATURE_ESTIM
 import json
-import io
 import os
-import random
-from common.util import *
 from common.paths import BASE_DIR
 
 
@@ -52,15 +49,3 @@ class Estim(Toy):
     def __init__(self, name):
         self.patterns = self.load_patterns()
         super().__init__(name, [FEATURE_ESTIM])
-
-    def action(self, params):
-        pattern = params["pattern"]
-        if pattern == "random":
-            pattern = random.choice([x for x in self.patterns.keys()])
-            info("random - selected: {}".format(pattern))
-        return self.shock(
-            params["duration"], params["strength"], pattern, params["toys"]
-        )
-
-    def shock(self, duration, strength, pattern=""):
-        pass

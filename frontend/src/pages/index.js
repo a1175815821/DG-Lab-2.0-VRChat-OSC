@@ -1,13 +1,10 @@
 import Head from 'next/head';
-import { subDays, subHours } from 'date-fns';
 import { Box, Container, Unstable_Grid2 as Grid } from '@mui/material';
 import { Layout as DashboardLayout } from 'src/layouts/dashboard/layout';
 import { OverviewCoyote } from 'src/sections/overview/overview-coyote';
 import { OverviewOscStatus } from 'src/sections/overview/overview-osc-status';
 import { OverviewSafeMode } from 'src/sections/overview/overview-safe-mode';
 import { OverviewVRC } from 'src/sections/overview/overview-vrc';
-
-const now = new Date();
 
 const Page = () => (
   <>

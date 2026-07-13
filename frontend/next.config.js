@@ -5,6 +5,10 @@ module.exports = {
       {
         source: '/api/:path*',
         destination: 'http://localhost:38080/api/:path*' // Proxy to Backend
+      },
+      {
+        source: '/settings',
+        destination: 'http://localhost:38080/settings'
       }
     ]
   }

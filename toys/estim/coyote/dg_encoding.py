@@ -15,7 +15,7 @@ def encode_power(pow_a: int, pow_b: int) -> bytes:
     """
     Encodes e-stim power settings into a three-byte message for consumption by the bluetooth device.
 
-    Valid input range (int): 0 <= pow_[a|b] <= 2047.
+    Valid input range (int): 0 <= pow_[a|b] <= 200.
 
     :param pow_a: output strength of channel a
     :param pow_b: output strength of channel b
@@ -56,7 +56,7 @@ def encode_pattern(ax: int, ay: int, az: int) -> bytes:
 
     # Identical: # struct.pack("BBB", b2, b1, b0)
 
-    return bytes([b1, b2, b0])  # cut and append first byte behind the third byte (??) # fixme, this makes no sense
+    return bytes([b1, b2, b0])  # cut and append first byte behind the third byte
 
 
 def test_function_validity():

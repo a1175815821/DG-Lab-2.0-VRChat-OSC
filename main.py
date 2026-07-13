@@ -4,12 +4,16 @@ import multiprocessing
 import os
 import signal
 import sys
+import time
+import urllib.error
+import urllib.request
+
 import uvicorn
 from settings import Settings, settings
 from common.paths import BASE_DIR
 from pythonosc import osc_server
 from routers import coyote, osc_server, vrc_osc
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
@@ -25,6 +29,13 @@ async def app_startup():
     logging.basicConfig(level=logging.INFO)
     # 应用启动时即启动 OSC 监听服务，独立于 Coyote 设备连接
     # 用户无需连接设备即可测试 VRChat OSC 信号是否正常
+    # 启动时强制恢复功率更新锁，避免上次异常退出遗留 can_update_power=false
+    if not settings.can_update_power:
+        settings.can_update_power = True
+        try:
+            settings.dump()
+        except Exception:
+            pass
     asyncio.create_task(coyote.serve_osc())
 
 
@@ -46,11 +57,30 @@ async def get_settings() -> Settings:
 import webview
 
 
+def _wait_for_server(url: str = "http://127.0.0.1:38080/health", timeout: float = 30.0) -> bool:
+    """等待 uvicorn 就绪后再打开窗口，避免白屏。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=1.0) as resp:
+                if resp.status == 200:
+                    return True
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+            pass
+        time.sleep(0.2)
+    return False
+
+
 def run_webview():
+    if not _wait_for_server():
+        logging.warning("后端健康检查超时，仍尝试打开窗口")
     webview.create_window(
-        "OSC Toys", "http://localhost:38080/index.html", width=1280, height=820
+        "DG-Lab 2.0 — VRChat OSC",
+        "http://localhost:38080/index.html",
+        width=1280,
+        height=820,
     )
-    webview.start(http_port=38080)
+    webview.start()
 
 
 def run_uvicorn():

@@ -35,7 +35,7 @@ import BluetoothConnectedIcon from '@mui/icons-material/BluetoothConnected';
 import { red, orange, green } from '@mui/material/colors';
 import { useEffect } from 'react';
 
-// 后端 coyote_connect_timeout 默认 40 秒，前端据此显示倒计时
+// 后端 coyote_connect_timeout 默认 40 秒；挂载后从 /settings 读取实际值
 const CONNECT_TIMEOUT = 40;
 
 export const CoyoteStats = () => {
@@ -52,13 +52,15 @@ export const CoyoteStats = () => {
   const [actionType, setActionType] = useState('start');
 
   // 安全模式状态（组件挂载时从后端获取并缓存）
-  // 默认 false（保守策略）：获取失败时也要求二次确认
-  const [safeMode, setSafeMode] = useState(false);
+  // 默认 true：与后端默认一致；获取失败时仍保守要求二次确认（见 getSafeMode）
+  const [safeMode, setSafeMode] = useState(true);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   // 连接中状态与剩余超时倒计时
   const [connecting, setConnecting] = useState(false);
   const [connectRemaining, setConnectRemaining] = useState(0);
+  // 后端连接超时（coyote_connect_timeout），挂载后从 /settings 读取
+  const [connectTimeout, setConnectTimeout] = useState(CONNECT_TIMEOUT);
   // 连接会话标识：超时后递增以使迟到的 POST 回调失效，避免重复提示
   const connectSessionRef = useRef(0);
 
@@ -109,7 +111,20 @@ export const CoyoteStats = () => {
       setSafeMode(!!res.data.safe_mode);
     }).catch((err) => {
       console.error(err);
-      // 获取失败保持默认 false（需要二次确认），更为保守
+      // 获取失败时按未开启安全模式处理，要求二次确认
+      setSafeMode(false);
+    });
+  }
+
+  // 从后端读取连接超时，避免前端倒计时与后端实际超时脱节
+  const getConnectTimeout = () => {
+    axios.get('/settings').then((res) => {
+      const t = res.data && res.data.coyote_connect_timeout;
+      if (typeof t === 'number' && t > 0) {
+        setConnectTimeout(t);
+      }
+    }).catch((err) => {
+      console.error(err);
     });
   }
 
@@ -121,7 +136,7 @@ export const CoyoteStats = () => {
     connectSessionRef.current += 1;
     const session = connectSessionRef.current;
     setConnecting(true);
-    setConnectRemaining(CONNECT_TIMEOUT);
+    setConnectRemaining(connectTimeout);
     axios.post('/api/coyote/start', data).then((res) => {
       // 超时后迟到的回调，忽略以避免与"连接超时"提示冲突
       if (session !== connectSessionRef.current) return;
@@ -177,6 +192,7 @@ export const CoyoteStats = () => {
     getUid();
     getStatus();
     getSafeMode();
+    getConnectTimeout();
     const id = setInterval(getStatus, 3000);
     return () => clearInterval(id);
   }, [firstPoll]);

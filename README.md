@@ -65,7 +65,7 @@ DG-Lab Coyote 官方强度范围为 **0–200**，本项目已全面对齐：
 
 ### OSC 地址自动获取
 
-VRChat 会在 `%LOCALAPPDATA%\Low\VRChat\VRChat\OSC\` 下为每个 avatar 生成 OSC 配置 json。本项目新增 `/api/vrc/avatars` 接口读取该目录：
+VRChat 会在 `%USERPROFILE%\AppData\LocalLow\VRChat\VRChat\OSC\` 下为每个 avatar 生成 OSC 配置 json。本项目新增 `/api/vrc/avatars` 接口读取该目录：
 
 - 修复 BOM 编码问题：使用 `utf-8-sig` 读取 VRC 生成的 json 文件
 - 修复参数地址解析：优先读取 `output.address`（完整 OSC 路径），而非 `name`
@@ -96,7 +96,7 @@ VRChat 会在 `%LOCALAPPDATA%\Low\VRChat\VRChat\OSC\` 下为每个 avatar 生成
 
 - 修复 `power_multiplier` 配置仅存储不生效的问题
 - `set_pwm` 路径现也应用 multiplier：`power = min(200, max_power × s × multiplier)`
-- 默认 multiplier 从 2.0 提升至 **6.0**（可在 settings.yaml 中自行调整）
+- 默认 multiplier 为 **1.0**（滑块与输出 1:1；可在 settings.yaml 中自行调整）
 
 ### UI 全面汉化与改进
 
@@ -126,25 +126,30 @@ VRChat 会在 `%LOCALAPPDATA%\Low\VRChat\VRChat\OSC\` 下为每个 avatar 生成
 ### 方式一：使用 Release（推荐普通用户）
 
 1. 前往 [Releases 页面](https://github.com/a1175815821/DG-Lab-2.0-VRChat-OSC/releases) 下载最新 `release_windows_x64.zip`
-2. 解压后运行 `osc-toys.exe`
-3. 准备一个支持 OSC 参数的 VRChat 形象（参数需为 Float 类型，例如 `VRCContactReceiver` Proximity 探针）
-4. 启动 VRChat，在 WebUI 中：
-   - **总览页** 查看 OSC 链接状态、安全模式开关
-   - **Coyote 页面** 填写设备 UID（留空可自动扫描）→ 点击「连接并启动」（安全模式关闭时需二次确认）
-   - **OSC 地址** 点击「自动获取」从本地 VRC 配置读取参数
-   - **侧边栏** 调整 A/B 通道强度上限（0–200，建议从 50 开始）
-   - **Patterns** 选择波形并查看实时预览
-5. 享受反馈
+2. 解压后运行 `osc-toys.exe`（保持 zip 内目录结构完整；若 38080 端口被占用请先关闭占用程序）
+3. 准备一个支持 OSC 参数的 VRChat 形象（参数需为 **Float** 类型，例如 `VRCContactReceiver` Proximity 探针）
+4. 启动 VRChat：
+   - 在设置中 **启用 OSC**
+   - 切换到目标 Avatar **至少一次**（才会在 LocalLow 生成 OSC 配置）
+5. 在本程序 WebUI 中：
+   - **总览页** 查看 OSC 链接状态（黄=等待信号，绿=已收到）、安全模式开关
+   - **Coyote 页面** 填写设备 UID（留空自动扫描 `D-LAB ESTIM01`）→「连接并启动」
+     - Coyote 指示灯为**白色（配对模式）时无法连接**，请退出配对
+   - **OSC 地址** 点击「自动获取」或手动填写 Float 参数路径
+   - **侧边栏** 调整 A/B 通道强度上限（0–200，**建议从 30–50 开始**；默认倍增 1.0，滑块与输出 1:1）
+   - **Patterns** 选择波形（无需先连接设备即可预览）
+6. 先在总览页确认 A/B 信号变绿，再逐步提高强度
 
 ### 方式二：从源码运行
 
 ```bash
+# 依赖：Python 3.11+、Node.js 16+（仅构建前端需要）
 # 后端
 git clone https://github.com/a1175815821/DG-Lab-2.0-VRChat-OSC.git
 cd DG-Lab-2.0-VRChat-OSC
 pip install -r requirements.txt
 
-# 前端
+# 前端（必须先 export，main.py 依赖 frontend/out）
 cd frontend
 npm install
 npm run build
@@ -155,7 +160,8 @@ cd ..
 python main.py
 ```
 
-启动后会同时打开桌面 WebUI 窗口与本地 HTTP 服务（端口 38080）。
+启动后会等待本地服务就绪，再打开桌面 WebUI 窗口（端口 **38080**）。
+本程序 OSC **监听**端口默认 **9001**（对应 VRChat 向外发送 OSC 的端口，不是接收端口）。
 
 ## 配置说明
 
@@ -166,8 +172,8 @@ python main.py
 | `coyote_uid` | `""` | 设备蓝牙地址，留空自动扫描名为 `D-LAB ESTIM01` 的设备 |
 | `coyote_addr_a` | `/avatar/parameters/EarLDis` | 通道 A 绑定的 OSC 参数地址（值需为 0–1 浮点） |
 | `coyote_addr_b` | `/avatar/parameters/EarRDis` | 通道 B 绑定的 OSC 参数地址 |
-| `coyote_max_power_a/b` | `100` | VRC 信号为 1.0 时设备的输出强度（0–200） |
-| `coyote_multiplier` | `6.0` | 强度倍增系数。V2.0 起对 `set_pwm` 路径也生效：`min(200, max_power × s × multiplier)` |
+| `coyote_max_power_a/b` | `50` | 信号满档时设备输出强度上限（0–200）。侧边栏调节此项 |
+| `coyote_multiplier` | `1.0` | 强度倍增。`power = min(200, max_power × mapped × multiplier)`。默认 1.0 使滑块与输出 1:1；一般无需改 |
 | `coyote_safe_mode` | `true` | 安全模式，限制最大输出为 100（约 50%）。**强烈建议保持开启** |
 | `start_limit` | `0.05` | 信号低于此值时完全断电 |
 | `min_limit` | `0.2` | 信号低于此值时保持 `min_power` |
@@ -246,7 +252,7 @@ python main.py
 - **实时 OSC 监控 (SSE)**：`/api/coyote/osc_stream` 推送原始值/均值/映射值 + 消息历史，首页进度条实时显示
 - **OSC 状态区分**：yellow"等待 VRChat" / green"VRChat 已连接" / grey"未启动"
 - **Avatar 运行时追踪**：监听 `/avatar/change` 实时记录当前 avatar ID，不再仅依赖文件修改时间
-- **`power_multiplier` 失效修复**：multiplier 现对 `set_pwm` 路径也生效，默认从 2.0 提升到 **6.0**
+- **`power_multiplier` 失效修复**：multiplier 对 `set_pwm` 路径生效；默认改为 **1.0**，避免滑块失真
 - **波形预览静态化**：去除了实时动画指针，减少视觉干扰
 - **引导页 Select 原生化**：使用 `native={true}` 消除下拉菜单卡顿
 - **安全模式后端强制**：`POST /api/coyote/max_power` 安全模式下自动限制上限 100
@@ -312,6 +318,16 @@ A: 首次访问会跟随系统，之后以手动选择为准（保存在 localSt
 **Q: 强度变化有延迟？**
 A: 默认 `window_size = 0.1` 秒更新一次。可减小该值提升响应速度，但太小会导致设备处理不过来反而延迟。建议在 0.05–0.1 之间寻找平衡。
 
+
+**Q: 侧边栏调了强度但体感不对 / 一碰就很强？**
+A: 确认 `settings.yaml` 中 `coyote_multiplier` 为 `1.0`（默认）。旧版本默认 6.0 会导致滑块过早顶满。强度上限建议从 30–50 开始。
+
+**Q: 程序窗口标题或品牌名不一致？**
+A: 当前产品名为 **DG-Lab 2.0 — VRChat OSC**（基于 osc-toys 二次开发）。请以本仓库 README 与 Releases 为准。
+
+**Q: 端口 38080 打不开 / 白屏？**
+A: 检查是否被其他程序占用；杀毒软件是否拦截；源码运行时是否已执行 `npm run export` 生成 `frontend/out`。
+
 **Q: 打包版 exe 启动后 settings.yaml 在哪？**
 A: 在 exe 同目录。首次运行时会从 exe 内部释放默认配置到外部，之后修改的配置都会保存到这个文件。
 
@@ -325,7 +341,7 @@ A: 在 exe 同目录。首次运行时会从 exe 内部释放默认配置到外�
 - 不要在未经明确同意的情况下对他人使用
 - 始终保持安全模式开启（限制上限 100），除非你完全清楚后果
 - 关闭安全模式后启动设备会有二次确认弹窗，请谨慎操作
-- 使用前请确保强度从低值开始逐步调整
+- 使用前请确保强度从低值开始逐步调整（默认上限 50，建议先确认 OSC 信号再提高）
 
 详见 `toys/estim/coyote/dg_interface.py` 文件头部的完整免责声明。
 

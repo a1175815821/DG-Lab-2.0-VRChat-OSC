@@ -83,7 +83,7 @@ class CoyoteInterface(Estim):
 
     pattern_name_a: str
     pattern_name_b: str
-    switch_pattern: bool = False
+
 
     def __init__(
         self,
@@ -101,8 +101,8 @@ class CoyoteInterface(Estim):
         """
         super().__init__("coyote")
         self.battery = -1
-        self.pow_a = 1
-        self.pow_b = 1
+        self.pow_a = 0
+        self.pow_b = 0
         # Set bluetooth device uid and device reference
         if device_uid is not None and device_uid != "":
             self.device_uid = device_uid
@@ -282,7 +282,7 @@ class CoyoteInterface(Estim):
 
         logging.info("Connecting to device: {} ...".format(self.device_uid))
 
-        saved_exception = ConnectionError
+        saved_exception = ConnectionError("Failed to connect to bluetooth device")
         if not self.device.is_connected:
             for _ in range(retries):
                 # Catch time-out errors while we retry
@@ -298,7 +298,7 @@ class CoyoteInterface(Estim):
                         f"Caught TimeoutError or CancelledError exception. Retrying... {type(e)}: {e}"
                     )
                     self.is_connected = False
-                    self.device._backend._timeout *= 2
+                    await asyncio.sleep(1.0)  # 固定退避，不再触碰 bleak 私有 _backend._timeout
 
         if not self.device.is_connected:
             # raise ConnectionError("Failed to connect to bluetooth device")
@@ -406,7 +406,7 @@ class CoyoteInterface(Estim):
         if not self.device.is_connected:
             logging.info("Disconnected!")
 
-    async def get_bettery_level(self) -> int:
+    async def get_battery_level(self) -> int:
         """Get battery level."""
 
         if not self.is_connected:
@@ -440,7 +440,7 @@ class CoyoteInterface(Estim):
 
         # Set power
         # todo: independent power strength for each individual channel. Perhaps thru
-        await self.set_pwm(power, power)
+        await (self.set_pwm(power, -1) if channel == "a" else self.set_pwm(-1, power))
         # self.get_pwm()?
 
         # if we assume that the given duration is in milliseconds (?), then we must calculate how many times the
@@ -466,9 +466,9 @@ class CoyoteInterface(Estim):
             pattern_name = (
                 self.pattern_name_a if channel == "a" else self.pattern_name_b
             )
-            self.switch_pattern = False
+            # 波形切换检测移入内层循环（实时比对 pattern_name）
             for state in self.patterns[pattern_name]:
-                if self.switch_pattern:
+                if (self.pattern_name_a if channel == "a" else self.pattern_name_b) != pattern_name:
                     break
                 cur_time = time.time()
                 if cur_time - last_time < 0.1:
@@ -498,7 +498,12 @@ class CoyoteInterface(Estim):
                 message = dg_encoding.encode_pattern(ax, ay, az)
 
                 # Send message to bluetooth device
-                output = await self.device.write_gatt_char(characteristic, message)
+                try:
+                    output = await self.device.write_gatt_char(characteristic, message)
+                except Exception as e:
+                    logging.error(f"BLE 写入失败，判定设备已断开: {e}")
+                    self.is_connected, self.stop_signal = False, True
+                    return
                 last_time = time.time()
 
                 settings.can_update_power = True
@@ -516,8 +521,8 @@ class CoyoteInterface(Estim):
             output = await self.device.read_gatt_char(self._pwm_ab2)
             pass
         except Exception as e:
-            logging.error(f"{e}\nReconnecting...")
-            await self.connect()
+            logging.error(f"{e}\n设备已断开，需手动重连")
+            self.is_connected, self.stop_signal = False, True
             return False
         # If power is 0, stop() has been called outside this function.
         # TODO: Need a better way to check if the device is still running.

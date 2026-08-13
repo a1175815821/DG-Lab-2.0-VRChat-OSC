@@ -13,15 +13,14 @@ from settings import Settings, settings
 from common.paths import BASE_DIR
 from pythonosc import osc_server
 from routers import coyote, osc_server, vrc_osc
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 
 app = FastAPI()
 
 app.include_router(coyote.router)
 app.include_router(osc_server.router)
 app.include_router(vrc_osc.router)
-app.mount("/", StaticFiles(directory=os.path.join(BASE_DIR, "frontend", "out"), html=True), name="frontend")
 
 
 @app.on_event("startup")
@@ -52,6 +51,46 @@ async def health():
 @app.get("/settings")
 async def get_settings() -> Settings:
     return settings
+
+
+FRONTEND_DIR = os.path.join(BASE_DIR, "frontend", "out")
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def frontend_spa(full_path: str):
+    """静态导出前端回退：把 /coyote 映射到 coyote.html，避免桌面窗口刷新时 404。
+
+    next export 只生成 index.html / coyote.html / 404.html 与 _next、assets 目录，
+    没有 /coyote 目录，因此用 StaticFiles(html=True) 无法命中。这里按顺序尝试：
+    1) out 下真实存在的文件（_next、assets、favicon 等）；
+    2) 目录下的 index.html；
+    3) <path>.html 页面文件；
+    最后回退到 404.html。
+    """
+    base = os.path.normpath(FRONTEND_DIR)
+    target = os.path.normpath(os.path.join(FRONTEND_DIR, full_path))
+    if target != base and not target.startswith(base + os.sep):
+        raise HTTPException(status_code=404)
+
+    if full_path:
+        if os.path.isfile(target):
+            return FileResponse(target)
+        if os.path.isdir(target):
+            index = os.path.join(target, "index.html")
+            if os.path.isfile(index):
+                return FileResponse(index)
+        page_html = os.path.join(base, full_path.strip("/") + ".html")
+        if os.path.isfile(page_html):
+            return FileResponse(page_html)
+    else:
+        index = os.path.join(base, "index.html")
+        if os.path.isfile(index):
+            return FileResponse(index)
+
+    not_found = os.path.join(base, "404.html")
+    if os.path.isfile(not_found):
+        return FileResponse(not_found, status_code=404)
+    raise HTTPException(status_code=404)
 
 
 import webview

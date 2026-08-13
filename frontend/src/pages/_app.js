@@ -76,7 +76,7 @@ const App = (props) => {
   return (
     <CacheProvider value={emotionCache}>
       <Head>
-        <title>OSC Toys</title>
+        <title>DG-Lab 2.0 — VRChat OSC</title>
         <meta name="viewport" content="initial-scale=1, width=device-width" />
       </Head>
       <ColorModeContext.Provider value={colorMode}>

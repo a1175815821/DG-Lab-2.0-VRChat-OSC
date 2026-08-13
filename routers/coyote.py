@@ -117,7 +117,20 @@ def _build_monitor_payload() -> Dict[str, Any]:
     }
 
 
-def get_avg(queue: List[float]) -> float:
+def _window_size() -> float:
+    """窗口时长守卫：避免 window_size <= 0 导致每条消息都触发输出。"""
+    w = settings.window_size
+    return w if w > 0 else 0.1
+
+
+def get_raw_avg(queue: List[float]) -> float:
+    """计算滑动窗口内信号的原始平均值。"""
+    if not queue:
+        return 0.0
+    return sum(queue) / len(queue)
+
+
+def map_signal(s: float) -> float:
     """
     三段式信号映射：
     - 低于 start_limit → 0（断电）
@@ -125,20 +138,17 @@ def get_avg(queue: List[float]) -> float:
     - 高于 max_limit → 1.0（满功率）
     - 中间区域线性插值
     """
-    s = 0.0
-    for x in queue:
-        s += x
-    s /= len(queue)
     if s < settings.start_limit:
         return 0.0
     if s < settings.min_limit:
         return settings.min_power
     if s >= settings.max_limit:
         return 1.0
-    s = (s - settings.min_limit) / (settings.max_limit - settings.min_limit) * (
-        1 - settings.min_power
-    ) + settings.min_power
-    return s
+    span = settings.max_limit - settings.min_limit
+    if span <= 0:
+        # 配置异常（min_limit >= max_limit）时避免除零，按满档处理
+        return 1.0
+    return (s - settings.min_limit) / span * (1 - settings.min_power) + settings.min_power
 
 
 def coyote_handler_a(addr, args, dis):
@@ -156,13 +166,14 @@ def coyote_handler_a(addr, args, dis):
     # 检查 can_update_power 超时兜底
     _check_power_lock_timeout()
 
-    if cur_time_a - last_time_a > settings.window_size:
+    if cur_time_a - last_time_a > _window_size():
         last_time_a = time.time()
         if len(param_queue_a) == 0 or not settings.can_update_power:
             param_queue_a.append(dis)
             return
-        s = get_avg(param_queue_a)
-        latest_avg_a = s
+        raw_avg = get_raw_avg(param_queue_a)
+        latest_avg_a = raw_avg
+        s = map_signal(raw_avg)
         if s < settings.start_limit:
             latest_mapped_a = 0.0
             asyncio.ensure_future(ci.set_pwm(0, -1), loop=asyncio.get_event_loop())
@@ -193,13 +204,14 @@ def coyote_handler_b(addr, args, dis):
 
     _check_power_lock_timeout()
 
-    if cur_time_b - last_time_b > settings.window_size:
+    if cur_time_b - last_time_b > _window_size():
         last_time_b = time.time()
         if len(param_queue_b) == 0 or not settings.can_update_power:
             param_queue_b.append(dis)
             return
-        s = get_avg(param_queue_b)
-        latest_avg_b = s
+        raw_avg = get_raw_avg(param_queue_b)
+        latest_avg_b = raw_avg
+        s = map_signal(raw_avg)
         if s < settings.start_limit:
             latest_mapped_b = 0.0
             asyncio.ensure_future(ci.set_pwm(-1, 0), loop=asyncio.get_event_loop())
@@ -270,8 +282,9 @@ async def start_signal_output():
 
 
 async def start_channel_a():
+    # 初始强度 0：连接后不立即输出，等待首个 OSC 信号再由 handler 驱动强度。
     await ci.signal(
-        power=int(settings.coyote_max_power_a * settings.min_power),
+        power=0,
         pattern_name=settings.coyote_pattern_a,
         duration=100000000,
         channel="a",
@@ -279,8 +292,9 @@ async def start_channel_a():
 
 
 async def start_channel_b():
+    # 初始强度 0：连接后不立即输出，等待首个 OSC 信号再由 handler 驱动强度。
     await ci.signal(
-        power=int(settings.coyote_max_power_b * settings.min_power),
+        power=0,
         pattern_name=settings.coyote_pattern_b,
         duration=100000000,
         channel="b",
@@ -338,8 +352,8 @@ async def update_max_power(req: UpdatePowerRequest):
     """设置 A/B 通道最大强度。安全模式下上限强制 100。未连接设备时仅持久化配置。"""
     try:
         safe_limit = 100 if settings.coyote_safe_mode else 200
-        pow_a = min(req.pow_a, safe_limit)
-        pow_b = min(req.pow_b, safe_limit)
+        pow_a = max(0, min(req.pow_a, safe_limit))
+        pow_b = max(0, min(req.pow_b, safe_limit))
         if ci is not None and ci.is_connected:
             if settings.coyote_max_power_a != 0:
                 percentage_a = ci.pow_a / settings.coyote_max_power_a
@@ -487,8 +501,6 @@ async def update_pattern(req: UpdatePatternRequest):
             settings.coyote_pattern_b = req.pattern_b
             if ci is not None:
                 ci.pattern_name_b = req.pattern_b
-        if ci is not None and ci.is_connected:
-            ci.switch_pattern = True
         settings.dump()
         return {"msg": "success"}
     except Exception as e:
@@ -518,7 +530,7 @@ async def get_status():
         if ci and ci.is_connected:
             return {
                 "is_connected": ci.is_connected,
-                "battery_level": await ci.get_bettery_level(),
+                "battery_level": await ci.get_battery_level(),
                 "uid": settings.coyote_uid,
             }
         else:
@@ -546,7 +558,7 @@ async def get_aggregate_status():
         battery = 0
         if device_connected:
             try:
-                battery = await ci.get_bettery_level()
+                battery = await ci.get_battery_level()
             except Exception:
                 pass
         return {

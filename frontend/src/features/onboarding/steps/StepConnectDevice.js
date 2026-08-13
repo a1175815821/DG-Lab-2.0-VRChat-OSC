@@ -21,7 +21,7 @@ export const StepConnectDevice = ({ onNext, onPrev }) => {
       updateData({ uid });
       setConnected(true);
     } catch (err) {
-      setError(err.response?.data?.detail || '连接失败，请确保设备已开启并等待配对');
+      setError(err.response?.data?.detail || '连接失败：请确认设备已开启、非白灯配对模式，并靠近电脑');
     } finally {
       setConnecting(false);
     }
@@ -39,7 +39,7 @@ export const StepConnectDevice = ({ onNext, onPrev }) => {
           连接你的设备
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          确保 Coyote 已开启并等待配对。留空将自动搜索设备。
+          确保 Coyote 已开启。指示灯为白色（配对模式）时无法连接，请退出配对后再试。UID 留空将自动扫描「D-LAB ESTIM01」。
         </Typography>
       </Box>
 

@@ -32,9 +32,13 @@ def _resolve_resources_dir() -> str:
     # PyInstaller：数据文件在 sys._MEIPASS 下
     if hasattr(sys, "_MEIPASS"):
         return sys._MEIPASS
-    # Nuitka onefile / standalone：__file__ 在解压后的临时目录里
+    # Nuitka standalone：本项目的 release 布局把 frontend/out 与 data 放在
+    # exe 同级目录，因此资源目录应与 exe 目录一致（同 USER_DATA_DIR）。
+    # 旧实现 dirname(__file__) 会解析到 common/，比项目根少一级。
     if _is_packaged():
-        return os.path.dirname(os.path.abspath(__file__))
+        if sys.argv and sys.argv[0]:
+            return os.path.dirname(os.path.abspath(sys.argv[0]))
+        return os.path.dirname(os.path.abspath(sys.executable))
     # 开发模式：源码目录（common/ 的上级）
     return os.path.dirname(os.path.abspath(os.path.join(__file__, "..")))
 

@@ -1,7 +1,7 @@
 r"""
 读取 VRChat 在本地生成的 OSC 配置文件，用于自动获取可用参数列表。
 
-VRC 启动时会在 `%LOCALAPPDATA%Low\VRChat\VRChat\OSC\` 下为每个用户与 avatar 生成 json：
+VRC 启动时会在 `%USERPROFILE%\AppData\LocalLow\VRChat\VRChat\OSC\` 下为每个用户与 avatar 生成 json：
 {
   "id": "avtr_xxx",
   "name": "Avatar Name",
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/vrc")
 
 
 def _get_osc_root() -> str:
-    """获取 VRC OSC 配置根目录"""
+    """获取 VRC OSC 配置根目录（Windows LocalLow）"""
     local_low = os.path.join(os.environ.get("USERPROFILE", ""), "AppData", "LocalLow")
     return os.path.join(local_low, "VRChat", "VRChat", "OSC")
 
@@ -90,7 +90,10 @@ async def list_avatars() -> Dict[str, Any]:
     if not user_dir:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="未找到 VRChat 用户配置。请先在 VRChat 中启用 OSC 并切换一次角色。",
+            detail=(
+                "未找到 VRChat 用户配置。请先在 VRChat 中启用 OSC 并切换一次角色。"
+                "配置目录：%USERPROFILE%\\AppData\\LocalLow\\VRChat\\VRChat\\OSC\\"
+            ),
         )
 
     avatars: List[Dict[str, Any]] = []
@@ -116,6 +119,8 @@ async def list_avatars() -> Dict[str, Any]:
                 existing["_mtime"] = mtime
                 existing["name"] = data.get("name") or avatar_id
                 existing["parameters"] = _parse_parameters(data.get("parameters", {}))
+            if mtime > newest_time:
+                newest_time = mtime
             continue
 
         avatars.append({
@@ -126,6 +131,12 @@ async def list_avatars() -> Dict[str, Any]:
         })
         if mtime > newest_time:
             newest_time = mtime
+
+    if not avatars:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="未找到 Avatar OSC 配置。请在 VRChat 中启用 OSC，并切换到目标形象至少一次。",
+        )
 
     # 标记当前穿戴的模型
     # 优先用 OSC 运行时追踪的 avatar ID（/avatar/change 实时更新）

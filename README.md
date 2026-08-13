@@ -246,7 +246,19 @@ python main.py
 
 ## 版本历史
 
-### v2.0 (当前)
+### v3.1.1 (当前)
+
+- **连接即输出修复**：连接设备后收到首个 OSC 信号前保持 0 强度，避免无信号持续输出
+- **蓝牙重连超时修复**：`connect()` 重试不再翻倍超时，移除对 bleak 私有 `_backend._timeout` 的依赖
+- **断线 fail-safe**：BLE 断开即停止输出并标记未连接，绝不自动恢复输出
+- **刷新 404 修复**：静态前端新增路由回退，`/coyote` 等路径刷新不再 404
+- **打包路径修复**：BASE_DIR 解析到 exe 同级目录，正确加载 `frontend/out` 与 `data`
+- **信号映射重构**：拆分为 `get_raw_avg`/`map_signal`，修正 SSE 滑动平均，处理 `min_limit >= max_limit` 除零与 `window_size <= 0` 边界
+- **强度接口加固**：`/api/coyote/max_power` 非负钳制；前端倒计时读取后端 `coyote_connect_timeout`
+- **Avatar 判定修复**：`newest_time` 在重复 avatar 分支同步更新，修正当前穿戴模型误判
+- **单元测试**：新增 `tests/`，覆盖信号映射、强度钳制与断线处理（11 个用例）
+
+### v2.0
 
 - **引导式新手引导 (Onboarding Wizard)**：粒子动画欢迎页 → 连接设备 → OSC 地址 → 波形选择 → 强度调节，逐步骤引导新用户
 - **实时 OSC 监控 (SSE)**：`/api/coyote/osc_stream` 推送原始值/均值/映射值 + 消息历史，首页进度条实时显示

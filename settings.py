@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 import yaml
@@ -92,7 +93,7 @@ class Settings(BaseModel):
                 yaml.dump(self._as_dict(), f)
             return True
         except Exception as e:
-            print(f"[settings] 写入 settings.yaml 失败（本次修改未持久化）: {e}")
+            logging.warning("写入 settings.yaml 失败（本次修改未持久化）: %s", e)
             return False
 
     @classmethod
@@ -104,7 +105,7 @@ class Settings(BaseModel):
                 stamp = time.strftime("%Y%m%d-%H%M%S")
                 shutil.copyfile(user_yaml, f"{user_yaml}.{stamp}.bak")
         except Exception as e:
-            print(f"[settings] 备份损坏的 settings.yaml 失败: {e}")
+            logging.warning("备份损坏的 settings.yaml 失败: %s", e)
 
     @classmethod
     def _read_yaml(cls, path: str):
@@ -128,7 +129,7 @@ class Settings(BaseModel):
                 try:
                     shutil.copyfile(builtin_yaml, user_yaml)
                 except Exception as e:
-                    print(f"[settings] 复制内置 settings.yaml 失败: {e}")
+                    logging.warning("复制内置 settings.yaml 失败: %s", e)
 
         try:
             settings_dict = cls._read_yaml(user_yaml)
@@ -139,22 +140,32 @@ class Settings(BaseModel):
             # 文件不可读 / YAML 语法错误：备份后回落默认值。
             # 这里不能让异常冒泡——load() 在模块级执行，一旦崩溃整个后端起不来，
             # 用户改坏了配置就再也打不开程序，且没有任何自助恢复路径。
-            print(f"[settings] 读取 settings.yaml 失败，已备份为 .bak 并使用默认配置: {e}")
+            # 不能用 print()：stdout 编码不支持中文时（Windows 非 UTF-8 控制台，
+            # 例如 cp1252）print 会再抛 UnicodeEncodeError。在 load() 里这意味着
+            # 异常从 except 块里冒出去 → Settings.load() 崩 → 模块级构造失败 →
+            # 整个后端起不来（用户改坏了配置就再也打不开程序），
+            # 恰好把这里「回落默认配置」的兜底完全废掉。
+            # logging 内部会吞掉编码异常，不会冒泡。
+            logging.error("读取 settings.yaml 失败，已备份为 .bak 并使用默认配置: %s", e)
             cls._backup_broken(user_yaml)
             return cls()
 
         if not isinstance(settings_dict, dict):
             # 空文件（safe_load 返回 None）或纯标量 / 列表，均按默认配置处理
             if settings_dict is not None:
-                print(f"[settings] settings.yaml 顶层格式异常"
-                      f"（{type(settings_dict).__name__}，应为键值对），使用默认配置")
+                logging.warning(
+                    "settings.yaml 顶层格式异常（%s，应为键值对），使用默认配置",
+                    type(settings_dict).__name__,
+                )
             return cls()
 
         try:
             return cls(**settings_dict)
         except Exception as e:
             # 字段类型错误等校验失败，同样回落默认值而不是崩溃
-            print(f"[settings] settings.yaml 字段校验失败，已备份为 .bak 并使用默认配置: {e}")
+            logging.error(
+                "settings.yaml 字段校验失败，已备份为 .bak 并使用默认配置: %s", e
+            )
             cls._backup_broken(user_yaml)
             return cls()
 

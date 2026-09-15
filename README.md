@@ -292,6 +292,13 @@ PyInstaller 打包 → 校验体积与内嵌前端 → 启动 exe 冒烟测试�
 - **补上测试依赖声明**：`fastapi` 的 `TestClient` 依赖 `httpx`，而它不在运行时闭包里。
   此前没有任何文件声明它，导致 CI 的「跑单元测试」步骤 `RuntimeError: The starlette.testclient
   module requires the httpx2 package` —— 65 个用例在 CI 里一次都没跑起来过
+- **配置读写的错误处理不再自己崩掉**：`settings.py` 的 6 处错误提示用的是 `print()`，且全在
+  兜底分支里。Windows 控制台编码由代码页决定，非中文系统上可能是 cp1252/cp437 —— 表示不了中文，
+  `print` 会再抛 `UnicodeEncodeError`：`dump()` 里崩会让「持久化失败返回 False」变成异常、
+  接口重新变 500；`load()` 里崩则会让异常从 `except` 块冒出去，`Settings.load()` 失败 →
+  模块级构造失败 → **整个后端起不来**，恰好把「回落默认配置」的兜底完全废掉。
+  现已全部改用 `logging`（内部会吞掉编码异常），并在 `main.py` 里把控制台 `errors` 放宽为
+  `replace` 作为兜底。这个问题是**新 CI 第一次跑单元测试时暴露的**（runner 的 stdout 正是 cp1252）
 - **打包配置纳入版本控制**：`build_local.spec` 此前被 `.gitignore` 的 `*.spec` 一起忽略，仓库里根本没有这个文件，克隆下来无法复现发布包。现已显式例外并加入索引
 - **CI 对齐本地产物并补上质量门禁**：原工作流用 Nuitka（onefile）打包，与本地 `build_local.spec`（PyInstaller）
   是两套产物；且不跑单元测试、不校验产物。现改为：跑单元测试 → 构建前端 → 用仓库自己的 spec 打包 →
@@ -311,7 +318,7 @@ PyInstaller 打包 → 校验体积与内嵌前端 → 启动 exe 冒烟测试�
 - **清理无用文件**：`frontend/pnpm-lock.yaml`（项目用 npm，`package-lock.json` 才是当前的）、
   `frontend/CHANGELOG.md`（上游 Devias 模板的更新日志，与本项目版本历史无关且版本号会误导）、
   以及 `.workbuddy/backup/`（约 1GB 的历史构建备份）与各类构建缓存
-- 单元测试 39 → **65 例**，新增 26 条针对上述问题的回归
+- 单元测试 39 → **69 例**，新增 30 条针对上述问题的回归
 
 ### v3.1.1
 

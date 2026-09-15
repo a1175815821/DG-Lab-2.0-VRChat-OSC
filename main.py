@@ -25,6 +25,29 @@ app.include_router(vrc_osc.router)
 BACKEND_PORT = 38080
 
 
+def _make_console_encoding_safe():
+    """让控制台输出永远不会因为编码问题抛异常。
+
+    打包版是 console=True，日志里有大量中文。Windows 控制台编码由代码页决定，
+    在非中文系统上可能是 cp1252/cp437 —— 这些编码表示不了中文，直接 write 会抛
+    UnicodeEncodeError。日志本身崩掉事小，但如果它发生在错误处理路径里
+    （例如「配置文件读不了，回落默认值」），就会把兜底逻辑一起带走。
+    这里把 stdout/stderr 的 errors 放宽成 replace，最坏情况是显示成问号。
+    """
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="replace")
+        except Exception:
+            pass
+
+
+_make_console_encoding_safe()
+
+
 def _log_osc_startup_result(task: asyncio.Task):
     """startup 里 OSC 服务是 create_task 起的，异常必须有人取，否则静默失败。"""
     if task.cancelled():

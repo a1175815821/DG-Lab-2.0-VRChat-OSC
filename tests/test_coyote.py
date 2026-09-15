@@ -14,9 +14,12 @@
 """
 
 import asyncio
+import io
 import json
 import os
+import re
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -1048,6 +1051,71 @@ class TestLocalOpenerBypassesProxy(unittest.TestCase):
         finally:
             httpd.shutdown()
             httpd.server_close()
+
+
+class TestConsoleEncodingResilience(unittest.TestCase):
+    """回归 B62：控制台编码不支持中文时，错误处理路径不能自己崩掉。
+
+    CI（Windows Server 2025，stdout 是 cp1252）实测：
+        UnicodeEncodeError: 'charmap' codec can't encode characters ...
+        File "settings.py", line 95, in dump
+            print(f"[settings] 写入 settings.yaml 失败（本次修改未持久化）: {e}")
+    这些 print 全在错误处理分支里：
+    - dump() 里崩 → 本来「持久化失败返回 False」变成抛异常，接口重新变 500；
+    - load() 里崩 → 异常从 except 块冒出去 → Settings.load() 失败 →
+      模块级构造失败 → 整个后端起不来，恰好把「回落默认配置」的兜底废掉。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._old_user_dir = settings_module.USER_DATA_DIR
+        self._old_base_dir = settings_module.BASE_DIR
+        settings_module.USER_DATA_DIR = self.tmp
+        settings_module.BASE_DIR = self.tmp
+        self._old_stdout = sys.stdout
+        self._old_stderr = sys.stderr
+        # cp1252 表示不了中文，errors="strict" 才会真的抛异常
+        sys.stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+        sys.stderr = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+
+    def tearDown(self):
+        sys.stdout = self._old_stdout
+        sys.stderr = self._old_stderr
+        settings_module.USER_DATA_DIR = self._old_user_dir
+        settings_module.BASE_DIR = self._old_base_dir
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_dump_returns_false_when_console_cannot_encode(self):
+        with patch("builtins.open", side_effect=OSError("read-only fs")):
+            self.assertFalse(
+                Settings().dump(),
+                "写入失败应返回 False，而不是让 print 的编码异常冒出去",
+            )
+
+    def test_load_falls_back_when_console_cannot_encode(self):
+        with open(os.path.join(self.tmp, "settings.yaml"), "w", encoding="utf-8") as f:
+            f.write("coyote_max_power_a: [1,2\n")   # 语法错误，走回退分支
+        loaded = Settings.load()
+        self.assertEqual(loaded.coyote_max_power_a, Settings().coyote_max_power_a)
+
+    def test_load_handles_scalar_root_when_console_cannot_encode(self):
+        with open(os.path.join(self.tmp, "settings.yaml"), "w", encoding="utf-8") as f:
+            f.write("just_a_string")
+        loaded = Settings.load()
+        self.assertEqual(loaded.coyote_max_power_a, Settings().coyote_max_power_a)
+
+    def test_settings_module_has_no_bare_print(self):
+        """错误处理路径禁止用 print()：它不可编码时会抛 UnicodeEncodeError。
+
+        这里做源码级守卫，避免以后又被人加回去。
+        """
+        src = open(settings_module.__file__, encoding="utf-8").read()
+        offenders = []
+        for i, line in enumerate(src.splitlines(), 1):
+            code = line.split("#", 1)[0]          # 注释里提到 print() 不算
+            if re.search(r"(?<![\w.])print\s*\(", code):
+                offenders.append(f"L{i}: {line.strip()}")
+        self.assertEqual(offenders, [], f"settings.py 不应出现 print()：{offenders}")
 
 
 if __name__ == "__main__":

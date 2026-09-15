@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from routers.coyote import serve_osc
 from settings import settings
 
@@ -8,8 +8,10 @@ router = APIRouter(prefix="/api/osc_server")
 
 
 class OSCAddress(BaseModel):
-    host: str
-    port: int
+    # 端口越界（如 70000）以前会一路走到 socket.bind() 才失败：接口 500，
+    # 而且旧监听已被关闭 → OSC 直接停摆。这里在入参层就拦掉，返回 422。
+    host: str = Field(min_length=1, max_length=253)
+    port: int = Field(ge=1, le=65535)
 
 
 @router.post("/address")

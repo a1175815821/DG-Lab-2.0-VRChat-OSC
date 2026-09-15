@@ -1,0 +1,12 @@
+# 打包工具链（仅发布构建需要，普通用户/源码运行不需要装）。
+#
+# 本项目的发布产物由 PyInstaller + build_local.spec 生成（见 README「架构说明」），
+# CI（.github/workflows/release-exe.yaml）也用同一套配置，保证本地产物与
+# 发布产物完全一致。早期 CI 用 Nuitka，与本地 spec 两套打包方式并存，
+# 产物布局对不上、排查时极易误判。
+#
+# 用法：
+#   pip install -r requirements-build.txt
+#   python -m PyInstaller build_local.spec --noconfirm
+# 产物：dist/osc-toys.exe（约 29 MB；体积明显变大说明把无关重库打进去了）
+pyinstaller==6.19.0

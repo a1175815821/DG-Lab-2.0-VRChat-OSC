@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Box, Button, Typography, Stack, FormControl, InputLabel, Select, MenuItem } from '@mui/material';
+import { Alert, Box, Button, Typography, Stack, FormControl, InputLabel, Select } from '@mui/material';
 import { useOnboarding } from 'src/contexts/onboarding-context';
 import axios from 'axios';
 import { PatternPreview } from 'src/components/pattern-preview';
@@ -32,12 +32,19 @@ const PATTERN_NAME_MAP = {
 const getPatternDisplayName = (name) => PATTERN_NAME_MAP[name] || name;
 
 export const StepWaveform = ({ onPrev }) => {
-  const { updateData, completeOnboarding } = useOnboarding();
-  const [patternA, setPatternA] = useState('vibrator_4');
-  const [patternB, setPatternB] = useState('vibrator_4');
+  // onboardingData 必须一起解构：漏掉它的话下面读 onboardingData.patternA
+  // 会直接 ReferenceError，引导最后一步整树崩溃（_app 无 ErrorBoundary → 白屏）。
+  const { onboardingData, updateData, completeOnboarding } = useOnboarding();
+  // 从已保存的配置初始化：重开引导时若硬编码成 vibrator_4，
+  // 用户一路点「下一步」就会把自己选好的波形悄悄改回默认值
+  const [patternA, setPatternA] = useState(onboardingData.patternA || 'vibrator_4');
+  const [patternB, setPatternB] = useState(onboardingData.patternB || 'vibrator_4');
   const [patternList, setPatternList] = useState([]);
   const [patternDetails, setPatternDetails] = useState({});
   const [isReady, setIsReady] = useState(false);
+  // 保存失败要显式告诉用户。以前 catch 里直接 completeOnboarding()，
+  // 波形根本没写进去却照样显示「准备就绪」，用户事后才发现设备没反应。
+  const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
     axios.get('/api/coyote/patterns').then((res) => {
@@ -48,6 +55,12 @@ export const StepWaveform = ({ onPrev }) => {
     });
   }, []);
 
+  // /settings 是异步拉取的，拿到后回填一次
+  useEffect(() => {
+    if (onboardingData.patternA) setPatternA(onboardingData.patternA);
+    if (onboardingData.patternB) setPatternB(onboardingData.patternB);
+  }, [onboardingData.patternA, onboardingData.patternB]);
+
   const getFirstVariant = (name) => {
     const variants = patternDetails[name];
     if (!variants || variants.length === 0) return [];
@@ -57,6 +70,7 @@ export const StepWaveform = ({ onPrev }) => {
   };
 
   const handleStart = async () => {
+    setSaveError('');
     try {
       await axios.post('/api/coyote/pattern', { pattern_a: patternA, pattern_b: patternB });
       updateData({ patternA, patternB });
@@ -64,7 +78,10 @@ export const StepWaveform = ({ onPrev }) => {
       setTimeout(() => completeOnboarding(), 1500);
     } catch (err) {
       console.error(err);
-      completeOnboarding();
+      setSaveError(
+        err.response?.data?.detail
+          || '波形保存失败。请检查后端是否正常运行，然后重试。'
+      );
     }
   };
 
@@ -142,6 +159,19 @@ export const StepWaveform = ({ onPrev }) => {
           <PatternPreview pattern={getFirstVariant(patternB)} height={120} />
         </Box>
       </Stack>
+
+      {saveError && (
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={() => completeOnboarding()}>
+              仍然继续
+            </Button>
+          }
+        >
+          {saveError}
+        </Alert>
+      )}
 
       <Stack direction="row" spacing={2}>
         <Button variant="outlined" onClick={onPrev} sx={{ flex: 1, borderRadius: 3 }}>

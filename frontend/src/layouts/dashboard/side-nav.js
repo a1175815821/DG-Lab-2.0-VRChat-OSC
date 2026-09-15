@@ -30,7 +30,7 @@ import MonitorHeartOutlinedIcon from '@mui/icons-material/MonitorHeartOutlined';
 export const SideNav = (props) => {
   const { open, onClose } = props;
   const pathname = usePathname();
-  const { reopenOnboarding } = useOnboarding();
+  const { reopenOnboarding, sharedSafeMode } = useOnboarding();
   const theme = useTheme();
   const lgUp = useMediaQuery((theme) => theme.breakpoints.up('lg'));
   const isDark = theme.palette.mode === 'dark';
@@ -53,6 +53,17 @@ export const SideNav = (props) => {
   // 后端连接错误提示
   const [serverError, setServerError] = useState(false);
   const failCountRef = useRef(0);
+  // 用户正在拖动滑块 / 正在输入数值。为 true 时轮询不回写，
+  // 否则每 2 秒一次的服务端值会把用户还没保存的输入直接冲掉。
+  const editingPowerRef = useRef(false);
+  // 强度保存串行化：in-flight 标记 + 拖动期间最后一次取值的暂存
+  const savingPowerRef = useRef(false);
+  const pendingPowerRef = useRef(null);
+  // 是否已经成功从服务端读到过一次强度上限。
+  // 两个滑块的初值都是 0，接口是「同时提交 A 和 B」的语义：
+  // 首次轮询成功之前用户若改了 A 并失焦，会把 B 一起提交成 0，
+  // 静默清掉 B 通道的强度上限（服务器返回 200，界面也显示「已保存」）。
+  const loadedPowerRef = useRef(false);
 
   // GitHub 统计：带 localStorage 缓存 + 降级显示
   const getGithubStats = () => {
@@ -86,8 +97,12 @@ export const SideNav = (props) => {
       setOscRunning(!!res.data.osc_running);
       setAActive(!!res.data.a_active);
       setBActive(!!res.data.b_active);
-      setMaxPowerA(res.data.max_power_a);
-      setMaxPowerB(res.data.max_power_b);
+      // 用户正在拖动/输入时不回写，否则本地值会被服务端旧值覆盖
+      if (!editingPowerRef.current) {
+        setMaxPowerA(res.data.max_power_a);
+        setMaxPowerB(res.data.max_power_b);
+      }
+      loadedPowerRef.current = true;
       setSafeMode(!!res.data.safe_mode);
       failCountRef.current = 0;
       setServerError(false);
@@ -102,14 +117,42 @@ export const SideNav = (props) => {
 
   // 松开滑块时自动保存
   const saveMaxPower = (a, b) => {
+    // 还没读到服务端配置就保存，会把另一个通道写成 0（见 loadedPowerRef 注释）
+    if (!loadedPowerRef.current) {
+      editingPowerRef.current = false;
+      setPowerHint('配置同步中，请稍后重试');
+      setTimeout(() => setPowerHint(''), 2000);
+      getAggregateStatus();
+      return;
+    }
+    // 拖动会连续触发 onChangeCommitted，并发 POST 会让后端按
+    // 「当前 pow / 旧 max_power」的比例反复换算，结果互相覆盖。
+    // 这里串行化：保存进行中只记录最后一次取值，结束后补发。
+    if (savingPowerRef.current) {
+      pendingPowerRef.current = { a, b };
+      return;
+    }
+    savingPowerRef.current = true;
     const data = { "pow_a": a, "pow_b": b };
-    axios.post('/api/coyote/max_power', data).then(() => {
+    // 设备已连接时后端会顺带写蓝牙，请求可能长时间不回；
+    // 不给超时的话 editingPowerRef 永远解不了锁，强度就不再从服务端回写。
+    axios.post('/api/coyote/max_power', data, { timeout: 8000 }).then(() => {
       setPowerHint('已保存');
       setTimeout(() => setPowerHint(''), 1500);
     }).catch((err) => {
       console.error(err);
       setPowerHint('保存失败');
       setTimeout(() => setPowerHint(''), 2000);
+    }).finally(() => {
+      // 保存完成（成功或失败）后才解除编辑锁：
+      // 失败时让下一轮轮询把真实值拉回来，用户能看到自己改的没生效
+      savingPowerRef.current = false;
+      editingPowerRef.current = false;
+      const pending = pendingPowerRef.current;
+      if (pending) {
+        pendingPowerRef.current = null;
+        saveMaxPower(pending.a, pending.b);
+      }
     });
   };
 
@@ -120,6 +163,10 @@ export const SideNav = (props) => {
     const id = setInterval(getAggregateStatus, 2000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    setSafeMode(sharedSafeMode);
+  }, [sharedSafeMode]);
 
   // 侧边栏背景色：深色模式下用更深的色调，浅色模式下用品牌色 indigo 的深色变体
   const sideBg = isDark ? '#0B1220' : '#1C2536';
@@ -210,6 +257,26 @@ export const SideNav = (props) => {
             满信号时的输出上限（0–200，默认 1:1）。松开或回车保存。
           </Typography>
 
+          {/* 连续 3 次轮询失败时的可见提示。
+              以前只 setServerError(true) 却从不渲染，等于状态白算 ——
+              后端挂了用户看不到任何线索，只以为「调了没反应」。 */}
+          {serverError && (
+            <Box
+              sx={{
+                mb: 1,
+                px: 1,
+                py: 0.75,
+                borderRadius: 1,
+                backgroundColor: 'rgba(240, 68, 56, 0.15)',
+                border: '1px solid rgba(240, 68, 56, 0.4)'
+              }}
+            >
+              <Typography sx={{ color: '#FDA29B', fontSize: 11, lineHeight: 1.4 }}>
+                无法连接到后端服务，强度设置可能未生效
+              </Typography>
+            </Box>
+          )}
+
           <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
             {/* A 通道标签 + 信号状态圆点 */}
             <Stack direction="row" alignItems="center" spacing={0.5} sx={{ width: 24 }}>
@@ -226,7 +293,10 @@ export const SideNav = (props) => {
             </Stack>
             <Slider
               value={maxPowerA}
-              onChange={(e, v) => setMaxPowerA(v)}
+              onChange={(e, v) => {
+                editingPowerRef.current = true;
+                setMaxPowerA(v);
+              }}
               onChangeCommitted={(e, v) => saveMaxPower(v, maxPowerB)}
               max={powerMax}
               size="small"
@@ -234,13 +304,14 @@ export const SideNav = (props) => {
             />
             <TextField
               value={maxPowerA}
+              onFocus={() => { editingPowerRef.current = true; }}
               onChange={(e) => {
                 const v = parseInt(e.target.value, 10);
                 if (!Number.isNaN(v)) setMaxPowerA(Math.min(powerMax, Math.max(0, v)));
                 else setMaxPowerA(0);
               }}
               onBlur={() => saveMaxPower(maxPowerA, maxPowerB)}
-              onKeyDown={(e) => { if (e.key === 'Enter') saveMaxPower(maxPowerA, maxPowerB); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
               inputProps={{ min: 0, max: powerMax, style: { color: '#fff', textAlign: 'center', padding: '2px 4px', fontSize: 12 } }}
               variant="standard"
               sx={{ width: 44, '.MuiInput-root:before': { borderBottomColor: 'rgba(255,255,255,0.3)' } }}
@@ -263,7 +334,10 @@ export const SideNav = (props) => {
             </Stack>
             <Slider
               value={maxPowerB}
-              onChange={(e, v) => setMaxPowerB(v)}
+              onChange={(e, v) => {
+                editingPowerRef.current = true;
+                setMaxPowerB(v);
+              }}
               onChangeCommitted={(e, v) => saveMaxPower(maxPowerA, v)}
               max={powerMax}
               size="small"
@@ -271,13 +345,14 @@ export const SideNav = (props) => {
             />
             <TextField
               value={maxPowerB}
+              onFocus={() => { editingPowerRef.current = true; }}
               onChange={(e) => {
                 const v = parseInt(e.target.value, 10);
                 if (!Number.isNaN(v)) setMaxPowerB(Math.min(powerMax, Math.max(0, v)));
                 else setMaxPowerB(0);
               }}
               onBlur={() => saveMaxPower(maxPowerA, maxPowerB)}
-              onKeyDown={(e) => { if (e.key === 'Enter') saveMaxPower(maxPowerA, maxPowerB); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
               inputProps={{ min: 0, max: powerMax, style: { color: '#fff', textAlign: 'center', padding: '2px 4px', fontSize: 12 } }}
               variant="standard"
               sx={{ width: 44, '.MuiInput-root:before': { borderBottomColor: 'rgba(255,255,255,0.3)' } }}

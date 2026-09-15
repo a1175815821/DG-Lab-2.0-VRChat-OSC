@@ -9,7 +9,7 @@ const Page = () => (
   <>
     <Head>
       <title>
-        Coyote | OSC Toys
+        Coyote | DG-Lab 2.0
       </title>
     </Head>
     <Box

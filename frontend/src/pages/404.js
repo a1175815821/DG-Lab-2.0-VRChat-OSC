@@ -7,7 +7,7 @@ const Page = () => (
   <>
     <Head>
       <title>
-        404 | OSC Toys
+        404 | DG-Lab 2.0
       </title>
     </Head>
     <Box

@@ -1,11 +1,9 @@
 name: Build-And-Release-Exe
 
-# Controls when the workflow will run
 on:
   push:
     tags:
       - "**"
-
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -14,62 +12,130 @@ jobs:
     # Windows is currently the only platform this action supports
     runs-on: windows-latest
 
-    strategy:
-      matrix:
-        node-version: [16.x]
-
     permissions:
       contents: write
+
+    env:
+      # 与本地实测环境保持一致（Python 3.13 + Node 22 均已验证可构建）。
+      PYTHON_VERSION: "3.13"
+      NODE_VERSION: "22"
+
     steps:
-      # Check-out repository
       - uses: actions/checkout@v4
 
-      # Setup Python
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11" # Version range or exact version of a Python version to use, using SemVer's version range syntax
-          architecture: "x64" # optional x64 or x86. Defaults to x64 if not specified
+          python-version: ${{ env.PYTHON_VERSION }}
+          architecture: "x64"
 
-      # Install dependencies
-      - name: Install Dependencies
-        run: |
-          pip install -r requirements.txt
-
-      # Build python script into a stand-alone exe
-      - uses: Nuitka/Nuitka-Action@main
-        with:
-          nuitka-version: main
-          script-name: main.py
-
-      # Build static frontend at `frontend/`
-      - name: Use Node.js ${{ matrix.node-version }}
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
-      - run: |
-          cd frontend
+          node-version: ${{ env.NODE_VERSION }}
+
+      # 运行时依赖 + 打包工具（PyInstaller）分开装，避免把开发工具混进运行时环境
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-build.txt
+
+      # 单元测试必须在打包之前跑：B21（引导页 ReferenceError）当年就是 lint 全绿、
+      # 无测试拦截，直接流进了发布产物。
+      - name: Run unit tests
+        run: python -m unittest tests.test_coyote -v
+
+      # 前端必须在打包之前构建：main.py 依赖 frontend/out 提供界面
+      - name: Build frontend
+        working-directory: frontend
+        run: |
           npm install
           npm run build
           npm run export
 
-      # Zip files
-      - run: |
-          mkdir osc-toys
-          mkdir osc-toys/frontend
-          cp build/main.exe osc-toys/osc-toys.exe
-          cp settings.yaml osc-toys/settings.yaml
-          cp -r frontend/out osc-toys/frontend/out
-          cp -r data osc-toys/data
-          Compress-Archive -Path "osc-toys" -Destination release_windows_x64.zip
+      # 用仓库自己的 spec 打包，保证 CI 产物与本地 `python -m PyInstaller build_local.spec` 一致
+      - name: Build exe (PyInstaller)
+        run: python -m PyInstaller build_local.spec --noconfirm
 
-      # Uploads artifact
-      - name: Upload Artifact
+      # 产物完整性校验：体积异常通常意味着构建损坏（曾出现 95MB 的损坏产物：
+      # python313.dll 载荷坏了、进程起不来），或把 PyQt5/matplotlib 等无关重库打了进去。
+      - name: Verify artifact
+        shell: pwsh
+        run: |
+          $exe = "dist/osc-toys.exe"
+          if (-not (Test-Path $exe)) { throw "未生成 $exe" }
+          $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+          Write-Host "osc-toys.exe = $mb MB"
+          if ($mb -lt 10 -or $mb -gt 60) {
+            throw "体积异常（$mb MB）：预期 20-40 MB。过大通常是打包进了无关重库，过小通常是构建损坏。"
+          }
+          # 用字节读取再转 ASCII 搜索：Select-String 读二进制文件不可靠
+          $chunk = (Select-String -Path "frontend/out/index.html" -Pattern "_app-[a-z0-9]+\.js" -AllMatches).Matches[0].Value
+          Write-Host "前端 chunk: $chunk"
+          $text = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($exe))
+          if (-not $text.Contains($chunk)) {
+            throw "exe 内没有找到最新的前端 chunk $chunk，前端未被打进包里"
+          }
+          Write-Host "exe 内嵌前端校验通过"
+
+      # 冒烟测试：真的把 exe 跑起来，确认 38080 能响应且接口可用。
+      # B20（重建的 exe 启动即挂死、38080 无监听、无任何输出）当时就是因为没有这一步才流出去的。
+      - name: Smoke test exe
+        shell: pwsh
+        run: |
+          # 必须让 127.0.0.1 绕过系统代理，否则请求会被代理拦截返回 502
+          # （本地验证时踩过：不设 NO_PROXY 时 /health 返回 502 Bad Gateway）
+          $env:NO_PROXY = "127.0.0.1,localhost"
+          $p = Start-Process -FilePath "dist/osc-toys.exe" -PassThru
+          $ok = $false
+          try {
+            for ($i = 0; $i -lt 60; $i++) {
+              Start-Sleep -Seconds 1
+              if ($p.HasExited) { break }
+              try {
+                $r = Invoke-WebRequest "http://127.0.0.1:38080/health" -UseBasicParsing -TimeoutSec 2
+                if ($r.StatusCode -eq 200) { $ok = $true; break }
+              } catch { }
+            }
+            if (-not $ok) {
+              $code = if ($p.HasExited) { "进程已退出，exit code = $($p.ExitCode)" } else { "进程存活但 60s 内 /health 无响应" }
+              throw "exe 冒烟测试失败：$code"
+            }
+            foreach ($path in @("/index.html", "/coyote", "/api/coyote/aggregate_status", "/api/coyote/patterns")) {
+              $r = Invoke-WebRequest "http://127.0.0.1:38080$path" -UseBasicParsing -TimeoutSec 5
+              if ($r.StatusCode -ne 200) { throw "GET $path 返回 $($r.StatusCode)" }
+              Write-Host "OK $path"
+            }
+            $s = Invoke-WebRequest "http://127.0.0.1:38080/settings" -UseBasicParsing -TimeoutSec 5 | Select-Object -ExpandProperty Content
+            if ($s -notmatch "coyote_connect_budget") { throw "/settings 缺少 coyote_connect_budget" }
+            Write-Host "OK /settings"
+          } finally {
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+      # 打成与本地 release_windows_x64.zip 相同的布局（文件在 zip 根目录，不带外层文件夹）
+      - name: Package release zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path osc-toys | Out-Null
+          New-Item -ItemType Directory -Force -Path osc-toys/frontend | Out-Null
+          Copy-Item dist/osc-toys.exe osc-toys/osc-toys.exe
+          Copy-Item settings.yaml osc-toys/settings.yaml
+          Copy-Item -Recurse -Force frontend/out osc-toys/frontend/out
+          Copy-Item -Recurse -Force data osc-toys/data
+          Compress-Archive -Path "osc-toys/*" -DestinationPath release_windows_x64.zip -Force
+          Write-Host "zip 大小: $([math]::Round((Get-Item release_windows_x64.zip).Length / 1MB, 1)) MB"
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release_windows_x64.zip
-          path: osc-toys
+          name: release_windows_x64
+          path: release_windows_x64.zip
 
+      # 手动触发（workflow_dispatch）时没有 tag，不该去建 release
       - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}

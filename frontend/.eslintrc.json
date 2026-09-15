@@ -1,9 +1,21 @@
 {
   "extends": "next/core-web-vitals",
+  "env": {
+    "browser": true,
+    "es2022": true
+  },
   "rules": {
     "@next/next/no-img-element": "off",
     "jsx-a11y/alt-text": "off",
     "react/display-name": "off",
+    "no-undef": "error",
+    "no-unused-vars": [
+      "error",
+      {
+        "args": "after-used",
+        "ignoreRestSiblings": true
+      }
+    ],
     "react/jsx-max-props-per-line": [
       1,
       {

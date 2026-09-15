@@ -10,7 +10,7 @@ const Page = () => (
   <>
     <Head>
       <title>
-        总览 | OSC Toys
+        总览 | DG-Lab 2.0
       </title>
     </Head>
     <Box

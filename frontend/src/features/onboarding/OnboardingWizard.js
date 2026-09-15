@@ -52,7 +52,7 @@ const GlassCard = ({ children }) => {
 };
 
 export const OnboardingWizard = () => {
-  const { currentStep, setCurrentStep, skipOnboarding } = useOnboarding();
+  const { currentStep, setCurrentStep, skipOnboarding, deviceSkipped } = useOnboarding();
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
   const [direction, setDirection] = useState(1);
@@ -106,6 +106,11 @@ export const OnboardingWizard = () => {
         <StepIndicator currentStep={currentStep} />
 
         <Box sx={{ width: '100%', maxWidth: 640, position: 'relative' }}>
+          {deviceSkipped && currentStep >= 2 && (
+            <Box sx={{ mb: 2, px: 2, py: 1, borderRadius: 2, bgcolor: 'warning.light', color: 'warning.contrastText' }}>
+              设备尚未连接。完成引导后可在 Coyote 页面手动连接设备。
+            </Box>
+          )}
           <AnimatePresence mode="wait" custom={direction}>
             <motion.div
               key={currentStep}

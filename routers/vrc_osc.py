@@ -20,8 +20,11 @@ import logging
 
 from fastapi import APIRouter, HTTPException, status
 
-# 从 OSC 运行时中获取 VRChat 实时切换的 avatar ID（由 /avatar/change 更新）
-from routers.coyote import current_vrc_avatar_id
+# 从 OSC 运行时中获取 VRChat 实时切换的 avatar ID（由 /avatar/change 更新）。
+# 必须以模块引用的方式读取：coyote.avatar_change_handler 里用 `global` 重新绑定的是
+# coyote 模块的全局名，`from routers.coyote import current_vrc_avatar_id` 是值绑定，
+# 导入时拷贝的那份永远不会更新，导致 tracked_avatar 恒为 None。
+from routers import coyote as coyote_router
 
 router = APIRouter(prefix="/api/vrc")
 
@@ -141,14 +144,16 @@ async def list_avatars() -> Dict[str, Any]:
     # 标记当前穿戴的模型
     # 优先用 OSC 运行时追踪的 avatar ID（/avatar/change 实时更新）
     # 回退到文件修改时间推测
-    tracked_avatar = current_vrc_avatar_id
-    logging.info(f"vrc_osc: 扫描到 {len(avatars)} 个 avatar, tracked_avatar={tracked_avatar}")
+    tracked_avatar = coyote_router.current_vrc_avatar_id
+    # 每次打开「自动获取」弹窗都会调用本接口，本机 avatar 可能几十个；
+    # 用 info 会往控制台刷几十行，降到 debug。
+    logging.debug("vrc_osc: 扫描到 %s 个 avatar, tracked_avatar=%s", len(avatars), tracked_avatar)
     for a in avatars:
         if tracked_avatar and a["id"] == tracked_avatar:
             a["is_current"] = True
         else:
             a["is_current"] = a["_mtime"] == newest_time
-        logging.info(f"  avatar: {a['name']} (id={a['id']}, is_current={a['is_current']})")
+        logging.debug("  avatar: %s (id=%s, is_current=%s)", a["name"], a["id"], a["is_current"])
         del a["_mtime"]
 
     return {"avatars": avatars, "current_user_id": os.path.basename(user_dir)}

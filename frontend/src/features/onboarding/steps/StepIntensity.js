@@ -8,6 +8,8 @@ export const StepIntensity = ({ onNext, onPrev }) => {
   const [powerA, setPowerA] = useState(onboardingData.maxPowerA);
   const [powerB, setPowerB] = useState(onboardingData.maxPowerB);
   const [safeMode, setSafeMode] = useState(onboardingData.safeMode);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
     setPowerA(onboardingData.maxPowerA);
@@ -15,11 +17,32 @@ export const StepIntensity = ({ onNext, onPrev }) => {
     setSafeMode(onboardingData.safeMode);
   }, [onboardingData.maxPowerA, onboardingData.maxPowerB, onboardingData.safeMode]);
 
-  const handleNext = () => {
-    updateData({ maxPowerA: powerA, maxPowerB: powerB, safeMode });
-    axios.post('/api/coyote/max_power', { pow_a: powerA, pow_b: powerB }).catch(console.error);
-    axios.post('/api/coyote/safe_mode', { safe_mode: safeMode }).catch(console.error);
-    onNext();
+  const handleNext = async () => {
+    setSaving(true);
+    setSaveError('');
+    // 必须串行且「先安全模式、后强度上限」：后端 update_max_power 按**当前**
+    // coyote_safe_mode 决定裁剪上限（safe_mode 时为 100）。两个请求并发发出去
+    // 时顺序不定，关闭安全模式的同时把强度调到 >100，有时生效有时被静默压回 100。
+    try {
+      const safeRes = await axios.post('/api/coyote/safe_mode', { safe_mode: safeMode });
+      const powRes = await axios.post('/api/coyote/max_power', { pow_a: powerA, pow_b: powerB });
+      // 以服务端实际生效值为准，避免界面显示 150、设备却是 100
+      updateData({
+        maxPowerA: powRes.data.max_power_a ?? powerA,
+        maxPowerB: powRes.data.max_power_b ?? powerB,
+        safeMode: !!safeRes.data.safe_mode,
+      });
+      onNext();
+    } catch (err) {
+      console.error(err);
+      updateData({ maxPowerA: powerA, maxPowerB: powerB, safeMode });
+      setSaveError(
+        err.response?.data?.detail
+          || '强度设置保存失败。请检查后端是否正常运行，然后重试。'
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   const maxAllowed = safeMode ? 100 : 200;
@@ -78,6 +101,19 @@ export const StepIntensity = ({ onNext, onPrev }) => {
         />
       </Box>
 
+      {saveError && (
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={() => onNext()}>
+              仍然继续
+            </Button>
+          }
+        >
+          {saveError}
+        </Alert>
+      )}
+
       <Stack direction="row" spacing={2}>
         <Button variant="outlined" onClick={onPrev} sx={{ flex: 1, borderRadius: 3 }}>
           ← 上一步
@@ -85,6 +121,7 @@ export const StepIntensity = ({ onNext, onPrev }) => {
         <Button
           variant="contained"
           onClick={handleNext}
+          disabled={saving}
           sx={{
             flex: 1,
             borderRadius: 3,

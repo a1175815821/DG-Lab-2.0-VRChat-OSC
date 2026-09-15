@@ -50,7 +50,6 @@ Licensed under the MIT License, (c) 2022 S. F. S.
 """
 
 import traceback
-from typing import Tuple
 import bleak  # bluetooth functionality
 
 # custom functionality for encoding communication to the bluetooth device
@@ -136,6 +135,11 @@ class CoyoteInterface(Estim):
         # Flag to indicate connection status
         self.is_connected = False
 
+        # 波形播放的停止信号。必须在构造时就存在：signal()/disconnect()/
+        # is_running() 都会读写它，只靠「调用顺序恰好先写后读」撑着，
+        # 任何早于 signal() 的读取路径都会 AttributeError。
+        self.stop_signal = False
+
         # Flag: Cap power intensity to 100 (out of 0-200) for safety reasons. The limit is enforced in
         # the self.set_pwm() method.
         # Do not disable unless absolutely certain that you know what you are doing!
@@ -180,7 +184,10 @@ class CoyoteInterface(Estim):
         if abs(pow_a - self.pow_a) < 1 and abs(pow_b - self.pow_b) < 1:
             return
 
-        logging.info(f"set_pwm({pow_a}, {pow_b})")
+        # 这条日志每个窗口周期都会打一次（默认 10Hz × 2 通道 = 20 行/秒）。
+        # 打包版带控制台窗口，Windows 控制台 I/O 很慢，长时间使用会明显拖慢
+        # 主循环。降到 debug，需要排查时用 OSC_TOYS_LOG_LEVEL=DEBUG 打开。
+        logging.debug(f"set_pwm({pow_a}, {pow_b})")
         self.pow_a = pow_a
         self.pow_b = pow_b
 
@@ -216,6 +223,32 @@ class CoyoteInterface(Estim):
                     f"Input values pow_a ({pow_a}) & pow_b ({pow_b}) must both be within the range 0-200!"
                 )
 
+    def _resolve_states(self, pattern_name: str) -> list:
+        """返回该波形待播放的状态列表。
+
+        兼容两种数据结构，避免 `ax, ay, az = state` 解包失败（ValueError）
+        导致整个信号任务静默退出：
+        - 状态列表：[[pulse, pause, amp], ...]（绝大多数波形）
+        - 变体列表：[[[pulse, pause, amp], ...], ...]（展平所有变体后播放）
+        """
+        data = self.patterns.get(pattern_name)
+        if not data:
+            logging.error(f"波形不存在: {pattern_name}")
+            return []
+        first = data[0]
+        if isinstance(first, (list, tuple)) and first and isinstance(first[0], (list, tuple)):
+            # 变体列表：展平，保证波形完整播放而不是只播第一个变体
+            states = []
+            for variant in data:
+                if isinstance(variant, (list, tuple)):
+                    states.extend(
+                        s for s in variant
+                        if isinstance(s, (list, tuple)) and len(s) == 3
+                    )
+            return states
+        # 状态列表：过滤掉结构异常的元素，避免解包时抛 ValueError
+        return [s for s in data if isinstance(s, (list, tuple)) and len(s) == 3]
+
     def _calculate_pattern_duration(self, pattern: list) -> int:
         """
         Calculates total duration of a pattern's combined pulses and pauses. Output duration is in milliseconds.
@@ -238,7 +271,8 @@ class CoyoteInterface(Estim):
 
         logging.info("Scanning for Bluetooth devices.")
         self.scanner = bleak.BleakScanner()
-        bluetooth_devices = await self.scanner.discover(timeout=10)
+        scan_timeout = settings.coyote_scan_timeout if settings.coyote_scan_timeout > 0 else 10
+        bluetooth_devices = await self.scanner.discover(timeout=scan_timeout)
 
         # Search for Coyote device with name/alias "DG-LAB ESTIM01".
         # on success, order the list to end with the devices with the strongest signal.
@@ -463,11 +497,30 @@ class CoyoteInterface(Estim):
         last_time = time.time() - 0.1
         # Iterate over the pattern and send each value (ax, ay, az) to the device in succession
         while cur_time < end_time:
+            # cur_time 必须在循环体最开头推进：它以前只在 for 内部被赋值，
+            # 一旦 _resolve_states() 返回空列表（波形名写错、data 损坏），
+            # for 体一次都不执行 → cur_time 永远小于 end_time → 无 await 的死循环，
+            # 整个 asyncio 事件循环被独占，后端彻底卡死。
+            cur_time = time.time()
+            if cur_time >= end_time:
+                logging.info("Shock - Hit time limit, stopping")
+                break
+            if self.stop_signal:
+                return
+
             pattern_name = (
                 self.pattern_name_a if channel == "a" else self.pattern_name_b
             )
-            # 波形切换检测移入内层循环（实时比对 pattern_name）
-            for state in self.patterns[pattern_name]:
+            states = self._resolve_states(pattern_name)
+            if not states:
+                logging.error(
+                    "波形 %r 没有可播放的数据，通道 %s 停止输出"
+                    "（请检查 settings.yaml 的 coyote_pattern_%s 与 data/estim 是否完整）",
+                    pattern_name, channel, channel,
+                )
+                return
+
+            for state in states:
                 if (self.pattern_name_a if channel == "a" else self.pattern_name_b) != pattern_name:
                     break
                 cur_time = time.time()

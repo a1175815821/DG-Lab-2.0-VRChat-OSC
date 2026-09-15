@@ -4,12 +4,15 @@ import axios from 'axios';
 const OnboardingContext = createContext(null);
 
 export const OnboardingProvider = ({ children }) => {
-  const [needsOnboarding, setNeedsOnboarding] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return !window.localStorage.getItem('osc-toys-onboarding-completed');
-  });
+  // Keep the SSR and first client render identical. The client-only storage
+  // check runs after mount, avoiding hydration mismatches while still showing
+  // onboarding on a user's first visit.
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
+  const [storageReady, setStorageReady] = useState(false);
 
   const [currentStep, setCurrentStep] = useState(0);
+  const [deviceSkipped, setDeviceSkipped] = useState(false);
+  const [sharedSafeMode, setSharedSafeMode] = useState(true);
 
   // 步骤数据暂存（默认与后端 settings 对齐，挂载后从 /settings 预填）
   const [onboardingData, setOnboardingData] = useState({
@@ -24,6 +27,11 @@ export const OnboardingProvider = ({ children }) => {
   });
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setNeedsOnboarding(!window.localStorage.getItem('osc-toys-onboarding-completed'));
+      setStorageReady(true);
+    }
+
     axios.get('/settings').then((res) => {
       const s = res.data || {};
       setOnboardingData((prev) => ({
@@ -37,6 +45,9 @@ export const OnboardingProvider = ({ children }) => {
         patternA: s.coyote_pattern_a || prev.patternA,
         patternB: s.coyote_pattern_b || prev.patternB,
       }));
+      if (typeof s.coyote_safe_mode === 'boolean') {
+        setSharedSafeMode(s.coyote_safe_mode);
+      }
     }).catch(() => {});
   }, []);
 
@@ -72,9 +83,14 @@ export const OnboardingProvider = ({ children }) => {
   return (
     <OnboardingContext.Provider
       value={{
-        needsOnboarding,
+        needsOnboarding: storageReady && needsOnboarding,
+        storageReady,
         setNeedsOnboarding,
         currentStep,
+        deviceSkipped,
+        setDeviceSkipped,
+        sharedSafeMode,
+        setSharedSafeMode,
         setCurrentStep,
         nextStep,
         prevStep,

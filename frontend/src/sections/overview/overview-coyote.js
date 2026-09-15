@@ -1,6 +1,6 @@
 import axios from 'axios';
 import PropTypes from 'prop-types';
-import { Avatar, Box, Card, CardContent, Stack, SvgIcon, Typography } from '@mui/material';
+import { Avatar, Card, CardContent, Stack, Typography } from '@mui/material';
 import { useState, useEffect } from 'react';
 
 import Battery20Icon from '@mui/icons-material/Battery20';
@@ -21,10 +21,15 @@ export const OverviewCoyote = (props) => {
   const [battery, setBattery] = useState(0);
   const [connected, setConnected] = useState(false);
 
+  // 用聚合接口而不是 /api/coyote/status：两者数据等价，但 /status 每次都会
+  // 走一次蓝牙读电量。侧边栏已经在 2s 轮询 aggregate_status，这里再单开一条
+  // /status 轮询等于把 BLE 读频次翻倍，设备忙时会互相干扰。
   const getStatus = () => {
-    axios.get('/api/coyote/status').then((res) => {
-      setBattery(res.data.battery_level);
-      setConnected(res.data.is_connected);
+    axios.get('/api/coyote/aggregate_status').then((res) => {
+      const isConnected = !!res.data.device_connected;
+      setConnected(isConnected);
+      // 设备已断开时清空电量显示，避免残留旧数据
+      setBattery(isConnected ? (res.data.battery_level ?? 0) : 0);
     }).catch((err) => {
       console.error(err);
     });
@@ -58,14 +63,16 @@ export const OverviewCoyote = (props) => {
                 alignItems: 'center',
                 flexWrap: 'wrap',
               }}>
-                {battery <= 20 && <Battery20Icon sx={{ fontSize: 40, color: red[500] }} />}
-                {battery > 20 && battery <= 30 && <Battery30Icon sx={{ fontSize: 40, color: orange[500] }} />}
-                {battery > 30 && battery <= 50 && <Battery50Icon sx={{ fontSize: 40, color: orange[500] }} />}
-                {battery > 50 && battery <= 60 && <Battery60Icon sx={{ fontSize: 40, color: green[500] }} />}
-                {battery > 60 && battery <= 80 && <Battery80Icon sx={{ fontSize: 40, color: green[500] }} />}
-                {battery > 80 && battery <= 90 && <Battery90Icon sx={{ fontSize: 40, color: green[500] }} />}
-                {battery > 90 && <BatteryFullIcon sx={{ fontSize: 40, color: green[500] }} />}
-                {battery}%
+                {/* 未连接时不要显示 0%：那会被误读成「电量耗尽」 */}
+                {!connected && <>—</>}
+                {connected && battery <= 20 && <Battery20Icon sx={{ fontSize: 40, color: red[500] }} />}
+                {connected && battery > 20 && battery <= 30 && <Battery30Icon sx={{ fontSize: 40, color: orange[500] }} />}
+                {connected && battery > 30 && battery <= 50 && <Battery50Icon sx={{ fontSize: 40, color: orange[500] }} />}
+                {connected && battery > 50 && battery <= 60 && <Battery60Icon sx={{ fontSize: 40, color: green[500] }} />}
+                {connected && battery > 60 && battery <= 80 && <Battery80Icon sx={{ fontSize: 40, color: green[500] }} />}
+                {connected && battery > 80 && battery <= 90 && <Battery90Icon sx={{ fontSize: 40, color: green[500] }} />}
+                {connected && battery > 90 && <BatteryFullIcon sx={{ fontSize: 40, color: green[500] }} />}
+                {connected && `${battery}%`}
               </div>
             </Typography>
           </Stack>

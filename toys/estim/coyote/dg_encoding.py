@@ -59,104 +59,18 @@ def encode_pattern(ax: int, ay: int, az: int) -> bytes:
     return bytes([b1, b2, b0])  # cut and append first byte behind the third byte
 
 
-def test_function_validity():
-    """
-    This function verifies that the encoding functions work exactly the same as their original javascript version.
-
-    Only meant for debugging/testing purposes!
-
-    More specifically, fuzzy_power_data.json & fuzzy_pattern_data.json contain samples of input/output pairs created
-    with the original javascript encoding functions. This function iterates through the data and verifies that
-    the outputs match the inputs.
-
-    fuzzy_power_data.json contains a single json object with the following schema:
-
-    [
-        input/output pair,
-        input/output pair,
-        input/output pair,
-        ...
-    ]
-
-    With each input/output pair having the following schema:
-
-     [pow_a,pow_b]
-          |  [byte message]
-          |        |
-     [1721,83,[83,200,53],"53 c8 35","1010011 11001000 110101"]  # example
-     |-------||---------| |----------------------------------|
-        input    output     output in base 16 & base 2 for human convenience
-
-    pow_a & pow_b are integers
-    byte message is a list of three integers, each integer representing a single 8-bit unsigned integer byte.
-
-
-    fuzzy_pattern_data.json follows a similar schema:
-
-    [
-        input/output pair,
-        input/output pair,
-        input/output pair,
-        ...
-    ]
-
-    With each input/output pair having the following schema:
-
-    [ax, ay, az]
-          |   [byte message]
-          |         |
-    [[8,685,26,[168,85,13],"a8 55 d","10101000 1010101 1101"]  # example
-     |--------||---------| |--------------------------------|
-        input     output    output in base 16 & base 2 for human convenience
-
-    pow_ax, ay & az are integers
-    byte message is a list of three integers, each integer representing a single 8-bit unsigned integer byte.
-
-    """
-
-    import json
-    print("Testing power data")
-    with open("fuzzy_power_data.json", "r") as infile:
-        power_test_data = json.load(infile)
-
-    s0 = power_test_data[0]
-    pow_a, pow_b, ba, hex_repr, bit_repr = s0
-    out = encode_power(pow_a, pow_b)
-    if bytes(ba) == out:  # test for identity
-        pass
-    else:
-        raise Exception(f"Error, {bytes(ba)} does not match {out}")
-
-    for sample in power_test_data:
-        pow_a, pow_b, ba, hex_repr, bit_repr = sample
-        out = encode_power(pow_a, pow_b)
-        if bytes(ba) == out:
-            # print(f"{ba[0]}: {out[0]}\n{ba[1]}: {out[1]}\n{ba[2]}: {out[2]}")
-            # print("---")
-            pass
-        else:
-            raise Exception(f"Error, {bytes(ba)} does not match {out}")
-    print("No errors found!")
-
-    print("Testing pattern data")
-    with open("fuzzy_pattern_data.json", "r") as infile:
-        pattern_test_data = json.load(infile)
-
-    s0 = pattern_test_data[0]
-    ax, ay, az, ba, hex_repr, bit_repr = s0
-    out = encode_pattern(ax, ay, az)
-    if bytes(ba) == out:  # test for identity
-        pass
-    else:
-        raise Exception(f"Error, {bytes(ba)} does not match {out}")
-
-    for sample in pattern_test_data:
-        ax, ay, az, ba, hex_repr, bit_repr = sample
-        out = encode_pattern(ax, ay, az)
-        if bytes(ba) == out:
-            # print(f"{ba[0]}: {out[0]}\n{ba[1]}: {out[1]}\n{ba[2]}: {out[2]}")
-            # print("---")
-            pass
-        else:
-            raise Exception(f"Error, {bytes(ba)} does not match {out}")
-    print("No errors found!")
+# 字节布局备忘（原先这里还有一个 test_function_validity()，用于拿
+# fuzzy_power_data.json / fuzzy_pattern_data.json 逐条比对 JS 原版实现，
+# 但那两个数据文件并不在仓库里，函数永远跑不起来，已删除）：
+#
+#   encode_power(pow_a, pow_b) → 3 字节
+#     b0 = pow_a >> 5          (高 6 位)
+#     b1 = (pow_a & 0x1F) << 3 | (pow_b >> 8)
+#     b2 = pow_b & 0xFF
+#     实际发送顺序：b2, b1, b0（首尾字节对调）
+#
+#   encode_pattern(ax, ay, az) → 3 字节
+#     b_ = (az & 0x01) << 15 | (ay & 0x3FF) << 5 | (ax & 0x1F)
+#     b0 = (az & 0x1E) >> 1
+#     b1, b2 = struct.pack("H", b_)   # 小端拆成两个字节
+#     实际发送顺序：b1, b2, b0

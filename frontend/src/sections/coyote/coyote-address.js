@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import {
   Alert,
@@ -10,14 +10,10 @@ import {
   CardHeader,
   CircularProgress,
   Divider,
-  FormControl,
-  InputLabel,
   List,
   ListItemButton,
   ListItemText,
-  MenuItem,
   Modal,
-  Select,
   Snackbar,
   Stack,
   TextField,
@@ -43,7 +39,7 @@ export const CoyoteOSCAddress = () => {
 
   const updateOscAddress = () => {
     const data = { "addr_a": oscAddressA, "addr_b": oscAddressB };
-    axios.post('/api/coyote/osc_addr', data).then((res) => {
+    axios.post('/api/coyote/osc_addr', data).then(() => {
       setOpenSuccess(true);
     }).catch((err) => {
       console.error(err);
@@ -96,9 +92,30 @@ export const CoyoteOSCAddress = () => {
 
   // 当前穿戴模型（自动选定）
   const currentAvatar = avatars.find((a) => a.is_current);
-  const floatParams = (currentAvatar?.parameters || []).filter(
-    (p) => !p.type || p.type.toLowerCase() === 'float'
-  );
+  const isFloatParam = (p) => !p.type || p.type.toLowerCase() === 'float';
+
+  // 优先列出当前模型的 Float 参数；若当前模型一个都没解析到
+  // （avatar 判定不准、或该模型确实没有 Float 接触参数），
+  // 退回到「所有 avatar 的 Float 参数合集」，否则用户会看到
+  // 「未找到 Float 类型参数」却明明有可选参数，自动获取形同虚设。
+  const floatParams = useMemo(() => {
+    const fromCurrent = (currentAvatar?.parameters || []).filter(isFloatParam);
+    if (fromCurrent.length > 0) return fromCurrent;
+
+    const seen = new Set();
+    const merged = [];
+    avatars.forEach((a) => {
+      (a.parameters || []).forEach((p) => {
+        if (!isFloatParam(p) || seen.has(p.name)) return;
+        seen.add(p.name);
+        merged.push({ ...p, avatarId: a.id });
+      });
+    });
+    return merged;
+  }, [avatars, currentAvatar]);
+
+  const isFallbackList = (currentAvatar?.parameters || []).filter(isFloatParam).length === 0
+    && floatParams.length > 0;
 
   return (
     <Card>
@@ -132,7 +149,9 @@ export const CoyoteOSCAddress = () => {
               </Stack>
             </Stack>
           </Grid>
-          <Grid item xs={12} sm={6} md={6}>
+          {/* Grid2（Unstable_Grid2）没有 item 属性：子元素天然就是 item，
+              写上 item 只会被 emotion 过滤掉，属无效属性。 */}
+          <Grid xs={12} sm={6} md={6}>
             <Stack spacing={1}>
               <Typography variant="h6">B 通道 OSC 地址</Typography>
               <Stack direction="row" spacing={1} alignItems="center">
@@ -219,6 +238,12 @@ export const CoyoteOSCAddress = () => {
             </Typography>
           )}
 
+          {isFallbackList && (
+            <Typography variant="body2" color="warning.main" sx={{ mb: 0.5 }}>
+              当前模型未解析到 Float 参数，下面列出的是本机所有 Avatar 的 Float 参数合集。
+            </Typography>
+          )}
+
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
             从 VRChat 本地 OSC 配置读取。仅显示 Float 类型参数。
           </Typography>
@@ -258,7 +283,9 @@ export const CoyoteOSCAddress = () => {
                   >
                     <ListItemText
                       primary={p.name}
-                      secondary={p.type ? `类型：${p.type}` : null}
+                      secondary={[p.type ? `类型：${p.type}` : null, p.avatarId ? `来源：${p.avatarId}` : null]
+                        .filter(Boolean)
+                        .join(' · ') || null}
                     />
                   </ListItemButton>
                 ))}

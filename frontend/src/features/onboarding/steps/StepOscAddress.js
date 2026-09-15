@@ -59,14 +59,19 @@ export const StepOscAddress = ({ onNext }) => {
       return;
     }
     setSaving(true);
+    setFetchError('');
     try {
       await axios.post('/api/coyote/osc_addr', { addr_a: addrA, addr_b: addrB });
       updateData({ oscAddressA: addrA, oscAddressB: addrB });
       onNext();
     } catch (err) {
       console.error(err);
+      // 保存失败不能静默往下走：地址没写进去用户会一头雾水地发现设备没反应
       updateData({ oscAddressA: addrA, oscAddressB: addrB });
-      onNext();
+      setFetchError(
+        err.response?.data?.detail
+          || 'OSC 地址保存失败。请检查后端是否正常运行，然后重试。'
+      );
     } finally {
       setSaving(false);
     }
@@ -90,7 +95,15 @@ export const StepOscAddress = ({ onNext }) => {
       )}
 
       {fetchError && (
-        <Alert severity="error" onClose={() => setFetchError('')}>
+        <Alert
+          severity="error"
+          onClose={() => setFetchError('')}
+          action={
+            <Button color="inherit" size="small" onClick={() => onNext()}>
+              仍然继续
+            </Button>
+          }
+        >
           {fetchError}
         </Alert>
       )}

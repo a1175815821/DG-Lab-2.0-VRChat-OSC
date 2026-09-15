@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
+import { useOnboarding } from 'src/contexts/onboarding-context';
 import axios from 'axios';
 import {
   Alert,
-  Box,
   Card,
   CardContent,
   FormControlLabel,
@@ -20,6 +20,7 @@ export const OverviewSafeMode = (props) => {
   const [openSuccess, setOpenSuccess] = useState(false);
   const [openError, setOpenError] = useState(false);
   const [message, setMessage] = useState('');
+  const { setSharedSafeMode } = useOnboarding();
 
   const getSafeMode = () => {
     axios.get('/api/coyote/safe_mode').then((res) => {
@@ -31,12 +32,17 @@ export const OverviewSafeMode = (props) => {
 
   const toggleSafeMode = (event) => {
     const newValue = event.target.checked;
+    setSafeMode(newValue);
+    setSharedSafeMode(newValue);
     const data = { "safe_mode": newValue };
     axios.post('/api/coyote/safe_mode', data).then((res) => {
       setSafeMode(!!res.data.safe_mode);
+      setSharedSafeMode(!!res.data.safe_mode);
       setOpenSuccess(true);
     }).catch((err) => {
       console.error(err);
+      setSafeMode(!newValue);
+      setSharedSafeMode(!newValue);
       setMessage(err.response?.data?.detail || String(err));
       setOpenError(true);
     });

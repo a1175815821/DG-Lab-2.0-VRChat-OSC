@@ -20,7 +20,9 @@ export const SplashScreen = ({ onComplete }) => {
     };
   }, [onComplete]);
 
-  const brandText = 'OSC Toys';
+  // 与窗口标题、侧边栏保持一致的产品名（此前这里写的是上游项目名 OSC Toys，
+  // 页面标题也是「… | OSC Toys」，同一程序出现两套品牌名）
+  const brandText = 'DG-Lab 2.0';
 
   return (
     <AnimatePresence>
@@ -126,7 +128,7 @@ delay: (i + 1) * 0.03,
                 fontWeight: 400,
               }}
             >
-              玩具 VRC 插件
+              玩具 VRC 插件 · VRChat OSC
             </motion.p>
 
             {/* Bottom pulse bar */}

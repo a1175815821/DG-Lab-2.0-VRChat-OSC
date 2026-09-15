@@ -32,7 +32,7 @@ export const OverviewVRC = () => {
       return;
     }
     const data = { "host": vrcHost, "port": portNum };
-    axios.post('/api/osc_server/address', data).then((res) => {
+    axios.post('/api/osc_server/address', data).then(() => {
       setOpenSuccess(true);
     }).catch((err) => {
       console.error(err);

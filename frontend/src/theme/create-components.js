@@ -12,6 +12,10 @@ const muiTheme = createTheme();
 
 export function createComponents(config) {
   const { palette } = config;
+  const isDark = palette.mode === 'dark';
+  // 输入框描边/底边：深色模式下不能继续用 neutral[200]（#E5E7EB），
+  // 那是一条几乎全白的线，压在 #1E293B 卡片上非常刺眼。
+  const inputBorder = isDark ? palette.neutral[600] : palette.neutral[200];
 
   return {
     MuiAvatar: {
@@ -154,7 +158,7 @@ export function createComponents(config) {
           borderStyle: 'solid',
           borderWidth: 1,
           overflow: 'hidden',
-          borderColor: palette.neutral[200],
+          borderColor: inputBorder,
           transition: muiTheme.transitions.create([
             'border-color',
             'box-shadow'
@@ -194,7 +198,7 @@ export function createComponents(config) {
           '&:hover': {
             backgroundColor: palette.action.hover,
             [`& .${outlinedInputClasses.notchedOutline}`]: {
-              borderColor: palette.neutral[200]
+              borderColor: inputBorder
             }
           },
           [`&.${outlinedInputClasses.focused}`]: {
@@ -217,7 +221,7 @@ export function createComponents(config) {
           lineHeight: '24px',
         },
         notchedOutline: {
-          borderColor: palette.neutral[200],
+          borderColor: inputBorder,
           transition: muiTheme.transitions.create([
             'border-color',
             'box-shadow'
@@ -277,8 +281,8 @@ export function createComponents(config) {
           borderBottom: 'none',
           [`& .${tableCellClasses.root}`]: {
             borderBottom: 'none',
-            backgroundColor: palette.neutral[50],
-            color: palette.neutral[700],
+            backgroundColor: isDark ? palette.neutral[800] : palette.neutral[50],
+            color: isDark ? palette.neutral[200] : palette.neutral[700],
             fontSize: 12,
             fontWeight: 600,
             lineHeight: 1,

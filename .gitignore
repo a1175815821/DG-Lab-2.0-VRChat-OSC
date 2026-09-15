@@ -34,6 +34,19 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# 例外：本仓库的打包配置是手写维护的（不是 PyInstaller 自动生成的），
+# 发布产物与 CI 都依赖它。之前被上面的 *.spec 一起忽略掉了，
+# 结果仓库里根本没有这个文件——克隆下来的人无法复现发布包，CI 也无从打包。
+!build_local.spec
+
+# 助手/工具的工作目录（审查记录、记忆、浏览器截图等），不属于项目源码
+.workbuddy/
+.workbuddy-ai/
+.freebuff/
+
+# 构建缓存
+.next/
+out/
 
 # Installer logs
 pip-log.txt

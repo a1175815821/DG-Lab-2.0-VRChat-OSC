@@ -77,7 +77,7 @@ export const CoyotePattern = () => {
 
   const updatePattern = () => {
     const data = { "pattern_a": patternA, "pattern_b": patternB };
-    axios.post('/api/coyote/pattern', data).then((res) => {
+    axios.post('/api/coyote/pattern', data).then(() => {
       setOpenSuccess(true);
     }).catch((err) => {
       console.error(err);
@@ -188,7 +188,8 @@ export const CoyotePattern = () => {
               </Box>
             </Stack>
           </Grid>
-          <Grid item xs={12} sm={6} md={6}>
+          {/* Grid2 无 item 属性，子元素天然是 item */}
+          <Grid xs={12} sm={6} md={6}>
             <Stack spacing={2}>
               <FormControl fullWidth variant="standard">
                 <InputLabel id="pattern-b-select-label">B 通道波形</InputLabel>

@@ -20,13 +20,17 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 
 function SignalBar({ label, value, maxValue, color }) {
-  const pct = maxValue > 0 ? Math.min((value / maxValue) * 100, 100) : 0;
+  // 后端已保证是数值，但这里是最后一道防线：只要 value 不是数字，
+  // value.toFixed() 就会抛 TypeError，把整个概览页炸进 ErrorBoundary。
+  const num = Number(value);
+  const safe = Number.isFinite(num) ? num : 0;
+  const pct = maxValue > 0 ? Math.min((safe / maxValue) * 100, 100) : 0;
   return (
     <Stack spacing={0.25}>
       <Stack direction="row" justifyContent="space-between">
         <Typography variant="caption" color="text.secondary">{label}</Typography>
         <Typography variant="caption" fontWeight="bold" sx={{ fontFamily: 'monospace' }}>
-          {value.toFixed(3)}
+          {safe.toFixed(3)}
         </Typography>
       </Stack>
       <LinearProgress
@@ -92,15 +96,29 @@ export const OverviewOscStatus = (props) => {
   const vrcConnected = aActive || bActive;
   const deviceConnected = status?.device_connected ?? false;
 
-  const aRaw = monitor?.a?.raw ?? 0;
-  const bRaw = monitor?.b?.raw ?? 0;
-  const aMapped = monitor?.a?.mapped ?? 0;
-  const bMapped = monitor?.b?.mapped ?? 0;
+  // 所有数值统一走 num()：后端/SSE 一旦给出非数值，这里兜底为 0，
+  // 避免 NaN 一路渗到界面上（曾导致 toFixed 崩溃）。
+  const num = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const aRaw = num(monitor?.a?.raw);
+  const bRaw = num(monitor?.b?.raw);
+  const aMapped = num(monitor?.a?.mapped);
+  const bMapped = num(monitor?.b?.mapped);
   const history = monitor?.history ?? [];
-  const maxPowerA = status?.max_power_a ?? 100;
-  const maxPowerB = status?.max_power_b ?? 100;
-  const aPowerOut = Math.round(aMapped * maxPowerA);
-  const bPowerOut = Math.round(bMapped * maxPowerB);
+  // 默认值与后端 Settings 保持一致（50），而不是拍脑袋的 100
+  const maxPowerA = num(status?.max_power_a ?? 50);
+  const maxPowerB = num(status?.max_power_b ?? 50);
+  const oscError = status?.osc_error || null;
+  // 后端实际输出 = min(safe_limit, max_power × mapped × multiplier)，
+  // 显示时必须带上 multiplier，否则手动改过配置后数值对不上；
+  // 也必须同样按安全上限裁剪，否则安全模式 + 大 multiplier 时显示值会高于真实输出。
+  const multiplier = num(status?.multiplier ?? 1);
+  const safeLimit = (status?.safe_mode ?? true) ? 100 : 200;
+  const aPowerOut = Math.round(Math.min(aMapped * maxPowerA * multiplier, safeLimit));
+  const bPowerOut = Math.round(Math.min(bMapped * maxPowerB * multiplier, safeLimit));
 
   return (
     <Card sx={sx}>
@@ -121,6 +139,12 @@ export const OverviewOscStatus = (props) => {
 
           {serverError && (
             <Alert severity="warning">无法连接到服务器，请检查后端服务是否正常</Alert>
+          )}
+
+          {oscError && (
+            <Alert severity="error">
+              {oscError}
+            </Alert>
           )}
 
           {!status && !serverError && (
@@ -202,7 +226,12 @@ export const OverviewOscStatus = (props) => {
                       sx={{
                         maxHeight: 160,
                         overflow: 'auto',
-                        bgcolor: 'grey.900',
+                        // 随主题变化：浅色下用浅灰，深色下用更深的底色。
+                        // 之前硬编码 grey.900，浅色主题里是一块突兀的黑底，
+                        // 且 text.secondary 压在上面对比度不足。
+                        bgcolor: (t) => (t.palette.mode === 'dark'
+                          ? 'rgba(0, 0, 0, 0.35)'
+                          : t.palette.grey[100]),
                         borderRadius: 1,
                         px: 1.5,
                         py: 1,
@@ -211,6 +240,8 @@ export const OverviewOscStatus = (props) => {
                     >
                       {[...history].reverse().map((entry, i) => {
                         const ts = new Date(entry.ts * 1000).toLocaleTimeString('zh-CN', { hour12: false });
+                        const rawNum = Number(entry.raw);
+                        const rawText = Number.isFinite(rawNum) ? String(rawNum) : String(entry.raw);
                         return (
                           <Stack key={i} direction="row" spacing={1.5} alignItems="center" sx={{ py: 0.15 }}>
                             <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace', minWidth: 65 }}>
@@ -219,12 +250,12 @@ export const OverviewOscStatus = (props) => {
                             <Typography
                               variant="caption"
                               fontWeight="bold"
-                              sx={{ minWidth: 16, color: entry.ch === 'A' ? 'info.light' : 'warning.light' }}
+                              sx={{ minWidth: 16, color: entry.ch === 'A' ? 'info.main' : 'warning.main' }}
                             >
                               {entry.ch}
                             </Typography>
                             <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
-                              {entry.raw}
+                              {rawText}
                             </Typography>
                           </Stack>
                         );
@@ -262,6 +293,11 @@ export const OverviewOscStatus = (props) => {
                     强度上限：A={maxPowerA} B={maxPowerB}
                     {deviceConnected && ` · 当前：A=${status.current_pow_a} B=${status.current_pow_b}`}
                   </Typography>
+                  {multiplier !== 1 && (
+                    <Typography variant="body2" color="text.secondary">
+                      强度倍增：×{multiplier}（在 settings.yaml 的 coyote_multiplier 中调整）
+                    </Typography>
+                  )}
                   <Typography variant="body2" color="text.secondary">
                     安全模式：{status.safe_mode ? '已启用（上限 100）' : '已关闭（上限 200）'}
                   </Typography>

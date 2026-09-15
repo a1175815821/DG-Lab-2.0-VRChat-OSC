@@ -8,6 +8,7 @@ import { ThemeProvider } from '@mui/material/styles';
 import { createTheme } from 'src/theme';
 import { ColorModeContext } from 'src/contexts/color-mode-context';
 import { OnboardingProvider, useOnboarding } from 'src/contexts/onboarding-context';
+import { ErrorBoundary } from 'src/components/error-boundary';
 import { SplashScreen, OnboardingWizard } from 'src/features/onboarding';
 import { useNProgress } from 'src/hooks/use-nprogress';
 import { createEmotionCache } from 'src/utils/create-emotion-cache';
@@ -19,11 +20,18 @@ const clientSideEmotionCache = createEmotionCache();
 const AppContent = (props) => {
   const { Component, pageProps } = props;
   const getLayout = Component.getLayout ?? ((page) => page);
-  const { needsOnboarding } = useOnboarding();
+  const { needsOnboarding, storageReady } = useOnboarding();
   const [splashDone, setSplashDone] = useState(false);
 
   // Show splash screen on first render if onboarding is needed
   const showSplash = needsOnboarding && !splashDone;
+
+  // localStorage 是挂载后才读的：storageReady 之前不渲染任何东西。
+  // 否则首帧会先画出主界面（并触发一堆 /status、/settings 请求），
+  // 下一帧才被启动页盖住，视觉上闪一下。
+  if (!storageReady) {
+    return null;
+  }
 
   return (
     <>
@@ -84,7 +92,9 @@ const App = (props) => {
           <ThemeProvider theme={theme}>
             <CssBaseline />
             <OnboardingProvider>
-              <AppContent Component={Component} pageProps={pageProps} />
+              <ErrorBoundary>
+                <AppContent Component={Component} pageProps={pageProps} />
+              </ErrorBoundary>
             </OnboardingProvider>
           </ThemeProvider>
         </LocalizationProvider>

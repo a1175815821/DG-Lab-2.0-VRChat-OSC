@@ -1,30 +1,26 @@
-anyio==3.6.2
-autopep8==2.0.2
-black==23.3.0
-bleak==0.20.2
-bleak-winrt==1.2.0
-certifi==2022.12.7
-cffi==1.15.1
-click==8.1.3
-colorama==0.4.6
-fastapi==0.95.1
-h11==0.14.0
-httptools==0.5.0
-idna==3.4
-MarkupSafe==2.1.2
-mypy-extensions==1.0.0
-packaging==23.1
-pathspec==0.11.1
-platformdirs==3.5.1
-pycodestyle==2.10.0
-pycparser==2.21
-pydantic==1.10.7
-python-osc==1.8.1
-pywebview==4.0.2
-PyYAML==6.0
-sniffio==1.3.0
-starlette==0.26.1
-typing_extensions==4.5.0
-uvicorn==0.22.0
-watchfiles==0.19.0
-websockets==11.0.3
+# 运行时依赖（Windows x64 / Python 3.11+）
+#
+# 只列「直接依赖」，传递依赖交给 pip 解析。
+# 之前把 pip freeze 的整份清单（含 black/autopep8 等开发工具和全部传递依赖）
+# 抄了进来，结果文件自相矛盾：pydantic 2.12.5 要求 typing-extensions>=4.14.1，
+# 这里却钉着 typing_extensions==4.5.0 —— `pip install -r requirements.txt`
+# 直接 ResolutionImpossible，README 的「方式二：从源码运行」和 CI 都跑不通。
+#
+# 版本已在 Python 3.13.5 / Windows x64 上实测通过。
+fastapi==0.136.3
+uvicorn==0.47.0
+python-osc==1.10.2
+PyYAML==6.0.3
+pydantic==2.12.5
+pywebview==6.2.1
+bleak==0.22.3
+
+# bleak 在 Windows 上按 Python 版本选用不同的 BLE 后端：
+#   Python < 3.12  → bleak-winrt
+#   Python >= 3.12 → winrt-*（由 bleak 自己声明，无需在此固定）
+# 必须带环境标记，否则 Python 3.12+ 上会去装没有对应 wheel 的 bleak-winrt。
+bleak-winrt==1.2.0; sys_platform == "win32" and python_version < "3.12"
+
+# 说明：
+# - 打包工具见 requirements-build.txt（PyInstaller）。
+# - 代码格式化工具（black / autopep8）不是运行时依赖，需要时单独安装。

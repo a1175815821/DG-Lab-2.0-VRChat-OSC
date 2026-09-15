@@ -24,46 +24,60 @@ export const PatternPreview = ({ pattern, height = 160 }) => {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const dpr = window.devicePixelRatio || 1;
-    const cssWidth = canvas.clientWidth;
-    const cssHeight = canvas.clientHeight;
-    canvas.width = cssWidth * dpr;
-    canvas.height = cssHeight * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-    if (segments.length === 0 || totalDuration === 0) {
-      ctx.fillStyle = theme.palette.text.disabled;
-      ctx.font = '12px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('暂无波形数据', cssWidth / 2, cssHeight / 2);
-      return;
-    }
+    const draw = () => {
+      const ctx = canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      const cssWidth = canvas.clientWidth;
+      const cssHeight = canvas.clientHeight;
+      if (cssWidth === 0 || cssHeight === 0) return;
+      canvas.width = cssWidth * dpr;
+      canvas.height = cssHeight * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-    const padding = 8;
-    const w = cssWidth - padding * 2;
-    const h = cssHeight - padding * 2;
-    const baseY = padding + h;
-    const maxAmp = 31;
+      if (segments.length === 0 || totalDuration === 0) {
+        ctx.fillStyle = theme.palette.text.disabled;
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('暂无波形数据', cssWidth / 2, cssHeight / 2);
+        return;
+      }
 
-    ctx.strokeStyle = theme.palette.divider;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let i = 0; i <= 4; i++) {
-      const y = padding + (h * i) / 4;
-      ctx.moveTo(padding, y);
-      ctx.lineTo(cssWidth - padding, y);
-    }
-    ctx.stroke();
+      const padding = 8;
+      const w = cssWidth - padding * 2;
+      const h = cssHeight - padding * 2;
+      const baseY = padding + h;
+      const maxAmp = 31;
 
-    ctx.fillStyle = theme.palette.primary.main;
-    for (const seg of segments) {
-      const x1 = padding + (seg.start / totalDuration) * w;
-      const pulseW = Math.max(1, (seg.pulse / totalDuration) * w);
-      const pulseH = (seg.amp / maxAmp) * h;
-      ctx.fillRect(x1, baseY - pulseH, pulseW, pulseH);
-    }
+      ctx.strokeStyle = theme.palette.divider;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 0; i <= 4; i++) {
+        const y = padding + (h * i) / 4;
+        ctx.moveTo(padding, y);
+        ctx.lineTo(cssWidth - padding, y);
+      }
+      ctx.stroke();
+
+      ctx.fillStyle = theme.palette.primary.main;
+      for (const seg of segments) {
+        const x1 = padding + (seg.start / totalDuration) * w;
+        const pulseW = Math.max(1, (seg.pulse / totalDuration) * w);
+        const pulseH = (seg.amp / maxAmp) * h;
+        ctx.fillRect(x1, baseY - pulseH, pulseW, pulseH);
+      }
+    };
+
+    draw();
+
+    // canvas 的位图尺寸只在 effect 依赖变化时重算，窗口/容器尺寸一变
+    // （桌面窗口缩放、侧边栏开合）画面就会被拉伸或裁切。
+    // 用 ResizeObserver 在尺寸变化时重绘。
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(draw);
+    observer.observe(canvas);
+    return () => observer.disconnect();
   }, [segments, totalDuration, theme]);
 
   return (

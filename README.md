@@ -43,7 +43,7 @@
 ### OSC 监听与设备解耦 ⭐
 
 - **OSC 监听独立于设备连接**：应用启动即运行 OSC 监听服务，无需 Coyote 设备在手即可测试 VRChat 信号是否正常
-- **OSC 地址热更新**：修改 OSC 地址无需断开设备，自动重启监听服务应用新地址
+- **OSC 地址热更新**：修改 OSC 地址无需断开设备，也**不会重建 UDP 监听 socket**，原地替换分发映射即可生效
 - **OSC 链接状态实时显示**：首页 OSC 状态卡片显示服务运行状态、A/B 通道信号活跃度（绿/黄/灰三色指示）
 
 ### 信号映射修复
@@ -116,7 +116,7 @@ VRChat 会在 `%USERPROFILE%\AppData\LocalLow\VRChat\VRChat\OSC\` 下为每个 a
 
 - **聚合状态接口**：`/api/coyote/aggregate_status` 一次请求返回所有状态，减少前端轮询
 - **打包路径修复**：区分只读资源目录（`BASE_DIR`）和用户配置目录（`USER_DATA_DIR`），首次运行自动释放 settings.yaml
-- **进程模型重构**：uvicorn 作为 daemon 子进程，关闭窗口后 `kill → terminate` 超时等待优雅退出
+- **进程模型**：uvicorn 跑在同一进程的守护线程里（早期版本用 `multiprocessing` 子进程，在 PyInstaller 单文件模式下 Windows `spawn` 会重复拉起 exe，导致 38080 无监听、窗口白屏）。关闭窗口前先打一次 `/api/coyote/stop` 做优雅停机（功率归零 + 断开蓝牙），再回收线程
 - **Avatar 运行时追踪**：监听 `/avatar/change` OSC 消息，实时记录当前穿戴 avatar ID
 - **代码清理**：删除空文件、未使用的 hook、constants.py 使用 BASE_DIR
 
@@ -160,6 +160,18 @@ cd ..
 python main.py
 ```
 
+### 方式三：自行打包 exe
+
+```bash
+pip install -r requirements-build.txt        # PyInstaller
+python -m PyInstaller build_local.spec --noconfirm
+# 产物：dist/osc-toys.exe（约 29 MB）
+# 运行时需要与 exe 同级的 frontend/out、data/、settings.yaml
+```
+
+CI（`.github/workflows/release-exe.yaml`）走的就是这套流程：跑单元测试 → 构建前端 →
+PyInstaller 打包 → 校验体积与内嵌前端 → 启动 exe 冒烟测试接口 → 打 zip 并发布。
+
 启动后会等待本地服务就绪，再打开桌面 WebUI 窗口（端口 **38080**）。
 本程序 OSC **监听**端口默认 **9001**（对应 VRChat 向外发送 OSC 的端口，不是接收端口）。
 
@@ -182,6 +194,8 @@ python main.py
 | `window_size` | `0.1` | 滑动窗口平均滤波时长（秒），影响响应平滑度 |
 | `vrc_host` | `127.0.0.1` | VRChat 客户端 OSC 主机 |
 | `vrc_osc_port` | `9001` | VRChat OSC 端口 |
+| `coyote_scan_timeout` | `10` | 蓝牙扫描时长（秒） |
+| `coyote_connect_retries` | `3` | 连接失败重试次数。最坏连接耗时 = 扫描 + 重试次数 × `coyote_connect_timeout`，前端倒计时按该预算显示 |
 
 ### 信号映射曲线
 
@@ -246,7 +260,46 @@ python main.py
 
 ## 版本历史
 
-### v3.1.1 (当前)
+### v3.2.0 (当前)
+
+第三轮全项目审查修复，重点解决「功能实际不可用 / 假功能 / 界面崩溃」：
+
+- **非数值 OSC 参数导致整页崩溃修复**：OSC handler 现在会把参数值规整为浮点数，字符串等非法类型只忽略并告警一次，不再污染实时监控值。此前向绑定地址发一个字符串（例如误绑到 Bool/字符串参数）会让概览页 `value.toFixed()` 抛 `TypeError`，整个界面被错误边界接管
+- **未知/损坏波形导致后端假死修复**：`signal()` 的循环变量此前只在波形状态循环体内推进，波形为空（`settings.yaml` 写错波形名、`data/estim` 缺失）时会变成无 `await` 的死循环，独占 asyncio 事件循环、后端彻底卡死。现在空波形会记录原因并安全退出
+- **保存 OSC 地址不再有 50% 概率失败**：原先每次都先 `close()` 旧 UDP socket 再 `bind()` 同一端口，Windows 上端口尚未释放必然 `WinError 10048`，接口返回 500 且 OSC 监听被打死（实测连续保存 4 次，第 1、3 次失败）。现在监听地址未变时只原地替换分发映射、完全不碰 socket；地址变了则先绑新、成功后再关旧，失败保留原监听继续工作
+- **非法端口不再打死 OSC**：`/api/osc_server/address` 在入参层校验 1–65535，越界返回 422（此前会走到 `bind()` 才 500，并顺带停掉监听）
+- **OSC 地址格式校验**：非空地址必须以 `/` 开头，否则返回 400。此前漏写前导 `/` 也会提示「保存成功」，实际永远匹配不到信号
+- **未知波形不再假成功**：`POST /api/coyote/pattern` 对不存在的波形名返回 400，而不是静默忽略后回 `success`
+- **连接超时预算对齐后端**：新增 `coyote_scan_timeout` / `coyote_connect_retries`，`/settings` 暴露 `coyote_connect_budget`（默认 130 秒）。此前前端硬编码 40s/90s，远小于后端最坏 130s，倒计时一到就 abort 并调 `/stop`，慢一点的蓝牙永远连不上
+- **非法 MUI 变体修复**：`variant="h7"` 不是合法变体，Typography 会退化成无样式 `<span>`，Coyote 页「电量 / 连接状态」两行排版与页面其余部分不一致
+- **品牌名统一**：启动页与页面标题此前用上游项目名「OSC Toys」，与窗口标题/侧边栏「DG-Lab 2.0 — VRChat OSC」不一致
+- **主题一致性**：OSC 消息历史面板不再硬编码 `grey.900`（浅色主题下是一块突兀黑底）；深色模式下输入框描边不再使用浅色 `neutral[200]`
+- **波形预览支持尺寸变化**：Canvas 增加 `ResizeObserver`，窗口缩放/侧边栏开合后不再被拉伸
+- **自动获取参数兜底**：当前模型解析不到 Float 参数时，列出本机所有 Avatar 的 Float 参数合集，而不是直接显示「未找到」
+- **减少冗余蓝牙读取**：概览页 Coyote 卡片改用聚合接口，不再额外轮询 `/status`（该接口每次都读一次 BLE 电量）
+- **首帧闪烁修复**：`localStorage` 读取完成前不渲染主界面，避免首帧先画出主界面再被启动页盖住
+- **未命中的 `/api/*` 返回 JSON 404**，而不是 HTML 404 页面（后者让前端所有接口错误都退化成「status code 404」）
+- **桌面窗口改用 `127.0.0.1`**，与健康检查一致，避免 `localhost` 优先解析到 `::1` 时白屏
+- **依赖声明修正**：`requirements.txt` 此前把 pip freeze 的整份清单抄了进来，其中 `typing_extensions==4.5.0` 与 `pydantic==2.12.5`（要求 `>=4.14.1`）直接冲突，`pip install -r requirements.txt` 必然失败（README 的「方式二：从源码运行」和 CI 都卡在这里）。现在只列直接依赖，并给 `bleak-winrt` 加上 Python 版本环境标记
+- **打包配置纳入版本控制**：`build_local.spec` 此前被 `.gitignore` 的 `*.spec` 一起忽略，仓库里根本没有这个文件，克隆下来无法复现发布包。现已显式例外并加入索引
+- **CI 重写**：原工作流用 Nuitka 打包（与本地的 PyInstaller 产物不一致）、不打前端就打包、不跑测试、不校验产物。现改为：跑单元测试 → 构建前端 → 用仓库自己的 `build_local.spec` 打包 → 校验体积与内嵌前端 chunk → 真的启动 exe 冒烟测试 `/health`、`/coyote`、`/settings` → 打 zip
+- **波形数据缺失不再导致程序起不来**：`load_patterns` 以前是裸 `open()`，`data/estim` 缺失/损坏会让 `Estim.__init__` 抛异常，而 `CoyoteInterface` 是模块级构造的 —— 表现为「双击 exe 没有任何窗口、38080 无监听」。现在缺失的波形文件会被跳过并告警，且 `default` 波形内置在代码里，程序始终能启动
+- **本机请求绕过系统代理**：`urllib` 默认读取系统代理，健康检查与**退出时的优雅停机**（把设备功率归零并断开蓝牙）都可能被代理打断。现在这两处都使用显式禁用代理的 opener
+- **退出时设备功率归零更可靠**：见上一条，这一步关系到「关窗后设备是否还在输出」
+- **侧边栏强度不再误清另一通道**：两个滑块初值都是 0，而保存接口是「同时提交 A 和 B」。首次同步完成前若只改一个通道，会把另一个通道写成 0。现在会等配置同步完成再允许保存
+- **日志不再刷屏**：每个窗口周期的 `set_pwm` 与逐条 avatar 扫描日志降到 debug（打包版带控制台窗口，Windows 控制台 I/O 会明显拖慢主循环）。需要时用 `OSC_TOYS_LOG_LEVEL=DEBUG` 打开
+- **打包 spec 清理**：移除 3 个指向不存在模块的 `hiddenimports`（`uvicorn.workers` 依赖未安装的 gunicorn、`pythonosc.handler`、`common.util`），避免噪音警告掩盖真正的缺模块
+- **侧边栏「服务器错误提示」由假功能变真功能**：`serverError` 状态一直在统计连续失败次数，却从未被渲染 —— 后端挂了用户在侧边栏看不到任何线索。现在会显示「无法连接到后端服务，强度设置可能未生效」
+- **死代码清理**：移除未使用的 import / 变量（前端 18 处、后端 2 处）、
+  `dg_encoding.test_function_validity()`（依赖仓库里并不存在的 `fuzzy_*_data.json`，永远跑不起来）、
+  `toys/base.py` 中从未被调用的 `check_in/action/get_toys` 桩方法与 3 个未使用常量；
+  并把 `no-unused-vars` 加进 ESLint 规则，防止再次堆积
+- **清理无用文件**：`frontend/pnpm-lock.yaml`（项目用 npm，`package-lock.json` 才是当前的）、
+  `frontend/CHANGELOG.md`（上游 Devias 模板的更新日志，与本项目版本历史无关且版本号会误导）、
+  以及 `.workbuddy/backup/`（约 1GB 的历史构建备份）与各类构建缓存
+- 单元测试 39 → **65 例**，新增 26 条针对上述问题的回归
+
+### v3.1.1
 
 - **连接即输出修复**：连接设备后收到首个 OSC 信号前保持 0 强度，避免无信号持续输出
 - **蓝牙重连超时修复**：`connect()` 重试不再翻倍超时，移除对 bleak 私有 `_backend._timeout` 的依赖
@@ -339,6 +392,11 @@ A: 当前产品名为 **DG-Lab 2.0 — VRChat OSC**（基于 osc-toys 二次开�
 
 **Q: 端口 38080 打不开 / 白屏？**
 A: 检查是否被其他程序占用；杀毒软件是否拦截；源码运行时是否已执行 `npm run export` 生成 `frontend/out`。
+
+**Q: 双击 exe 没有任何窗口，38080 也没监听？**
+A: 先确认压缩包解压后目录结构完整 —— `osc-toys.exe` 必须与 `frontend/`、`data/`、`settings.yaml` 同级。
+`data/estim/` 里是波形数据，如果被清理掉，程序启动时读不到波形（旧版本会直接起不来，v3.2.0 起会跳过缺失文件并回退到内置的「默认」波形）。
+另外可临时设置环境变量 `OSC_TOYS_LOG_LEVEL=DEBUG` 重新运行，看控制台输出定位原因。
 
 **Q: 打包版 exe 启动后 settings.yaml 在哪？**
 A: 在 exe 同目录。首次运行时会从 exe 内部释放默认配置到外部，之后修改的配置都会保存到这个文件。

@@ -1,12 +1,14 @@
 # 运行时依赖（Windows x64 / Python 3.11+）
 #
-# 只列「直接依赖」，传递依赖交给 pip 解析。
-# 之前把 pip freeze 的整份清单（含 black/autopep8 等开发工具和全部传递依赖）
-# 抄了进来，结果文件自相矛盾：pydantic 2.12.5 要求 typing-extensions>=4.14.1，
-# 这里却钉着 typing_extensions==4.5.0 —— `pip install -r requirements.txt`
-# 直接 ResolutionImpossible，README 的「方式二：从源码运行」和 CI 都跑不通。
+# 锁定「完整闭包」而不只是直接依赖，原因是有过教训：
+# 只列直接依赖时 pip 会解析到更新的传递依赖 —— CI 上 starlette 被解析成需要
+# httpx2 的新版本，单元测试直接跑不起来，而本地是 starlette 1.1.0。
+# 下面每一项都取自实际验证通过的环境（Python 3.13.5 / Windows x64）。
 #
-# 版本已在 Python 3.13.5 / Windows x64 上实测通过。
+# 改完务必校验「声明之间是否自洽」（历史坑：pydantic 2.12.5 要求
+# typing-extensions>=4.14.1，文件里却钉着 4.5.0，pip 直接 ResolutionImpossible）。
+
+# ── 直接依赖 ──────────────────────────────────────────────
 fastapi==0.136.3
 uvicorn==0.47.0
 python-osc==1.10.2
@@ -15,12 +17,39 @@ pydantic==2.12.5
 pywebview==6.2.1
 bleak==0.22.3
 
-# bleak 在 Windows 上按 Python 版本选用不同的 BLE 后端：
-#   Python < 3.12  → bleak-winrt
-#   Python >= 3.12 → winrt-*（由 bleak 自己声明，无需在此固定）
-# 必须带环境标记，否则 Python 3.12+ 上会去装没有对应 wheel 的 bleak-winrt。
-bleak-winrt==1.2.0; sys_platform == "win32" and python_version < "3.12"
+# ── 传递依赖（一并锁定，保证 CI 与本地装出同一套运行时）────
+starlette==1.1.0
+anyio==4.12.0
+annotated-types==0.7.0
+annotated-doc==0.0.4
+typing_extensions==4.15.0
+typing-inspection==0.4.2
+pydantic_core==2.41.5
+click==8.4.1
+h11==0.16.0
+colorama==0.4.6
+idna==2.10
+pythonnet==3.1.0
+clr_loader==0.3.1
+cffi==2.0.0
+pycparser==3.0
+proxy_tools==0.1.0
+bottle==0.13.4
 
-# 说明：
-# - 打包工具见 requirements-build.txt（PyInstaller）。
-# - 代码格式化工具（black / autopep8）不是运行时依赖，需要时单独安装。
+# ── Windows 上的 BLE 后端：按 Python 版本二选一 ────────────
+# 必须带环境标记，否则会去装没有对应 wheel 的包。
+#   Python < 3.12  → bleak-winrt
+#   Python >= 3.12 → winrt-*（下面 7 个）
+bleak-winrt==1.2.0; sys_platform == "win32" and python_version < "3.12"
+winrt-runtime==2.3.0; sys_platform == "win32" and python_version >= "3.12"
+winrt-Windows.Devices.Bluetooth==2.3.0; sys_platform == "win32" and python_version >= "3.12"
+winrt-Windows.Devices.Bluetooth.Advertisement==2.3.0; sys_platform == "win32" and python_version >= "3.12"
+winrt-Windows.Devices.Bluetooth.GenericAttributeProfile==2.3.0; sys_platform == "win32" and python_version >= "3.12"
+winrt-Windows.Devices.Enumeration==2.3.0; sys_platform == "win32" and python_version >= "3.12"
+winrt-Windows.Foundation==2.3.0; sys_platform == "win32" and python_version >= "3.12"
+winrt-Windows.Foundation.Collections==2.3.0; sys_platform == "win32" and python_version >= "3.12"
+winrt-Windows.Storage.Streams==2.3.0; sys_platform == "win32" and python_version >= "3.12"
+
+# ── 其它 ─────────────────────────────────────────────────
+# 测试依赖见 requirements-dev.txt，打包工具见 requirements-build.txt。
+# 代码格式化工具（black / autopep8）不是运行时依赖，需要时单独安装。

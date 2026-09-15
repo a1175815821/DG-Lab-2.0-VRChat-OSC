@@ -148,6 +148,7 @@ VRChat 会在 `%USERPROFILE%\AppData\LocalLow\VRChat\VRChat\OSC\` 下为每个 a
 git clone https://github.com/a1175815821/DG-Lab-2.0-VRChat-OSC.git
 cd DG-Lab-2.0-VRChat-OSC
 pip install -r requirements.txt
+pip install -r requirements-dev.txt        # 跑单元测试才需要（TestClient 依赖 httpx）
 
 # 前端（必须先 export，main.py 依赖 frontend/out）
 cd frontend
@@ -280,9 +281,22 @@ PyInstaller 打包 → 校验体积与内嵌前端 → 启动 exe 冒烟测试�
 - **首帧闪烁修复**：`localStorage` 读取完成前不渲染主界面，避免首帧先画出主界面再被启动页盖住
 - **未命中的 `/api/*` 返回 JSON 404**，而不是 HTML 404 页面（后者让前端所有接口错误都退化成「status code 404」）
 - **桌面窗口改用 `127.0.0.1`**，与健康检查一致，避免 `localhost` 优先解析到 `::1` 时白屏
-- **依赖声明修正**：`requirements.txt` 此前把 pip freeze 的整份清单抄了进来，其中 `typing_extensions==4.5.0` 与 `pydantic==2.12.5`（要求 `>=4.14.1`）直接冲突，`pip install -r requirements.txt` 必然失败（README 的「方式二：从源码运行」和 CI 都卡在这里）。现在只列直接依赖，并给 `bleak-winrt` 加上 Python 版本环境标记
+- **依赖声明与实际运行环境脱节**：仓库里提交的 `requirements.txt` 停在 fastapi 0.95.1 / pydantic 1.10.7 /
+  starlette 0.26.1 / uvicorn 0.22.0 / pywebview 4.0.2，而代码与实际验证过的环境是 fastapi 0.136.3 /
+  pydantic 2.12.5 / uvicorn 0.47.0 / pywebview 6.2.1。照旧文件执行「方式二：从源码运行」装出来的是另一套运行时。
+  更麻烦的是工作区里还躺着一份未提交的改动（把部分版本升上去了，却留着 `typing_extensions==4.5.0`），
+  它与 `pydantic==2.12.5`（要求 `>=4.14.1`）直接冲突，`pip install -r requirements.txt` 会 `ResolutionImpossible`。
+  现在把**完整运行时闭包**（32 个包）全部锁到实测版本，`bleak-winrt` / `winrt-*` 按 Python 版本加环境标记，
+  测试依赖独立到 `requirements-dev.txt`，打包工具独立到 `requirements-build.txt`。
+  只锁直接依赖是不够的：CI 上 pip 把 starlette 解析成了需要 `httpx2` 的新版本，单元测试直接跑不起来
+- **补上测试依赖声明**：`fastapi` 的 `TestClient` 依赖 `httpx`，而它不在运行时闭包里。
+  此前没有任何文件声明它，导致 CI 的「跑单元测试」步骤 `RuntimeError: The starlette.testclient
+  module requires the httpx2 package` —— 65 个用例在 CI 里一次都没跑起来过
 - **打包配置纳入版本控制**：`build_local.spec` 此前被 `.gitignore` 的 `*.spec` 一起忽略，仓库里根本没有这个文件，克隆下来无法复现发布包。现已显式例外并加入索引
-- **CI 重写**：原工作流用 Nuitka 打包（与本地的 PyInstaller 产物不一致）、不打前端就打包、不跑测试、不校验产物。现改为：跑单元测试 → 构建前端 → 用仓库自己的 `build_local.spec` 打包 → 校验体积与内嵌前端 chunk → 真的启动 exe 冒烟测试 `/health`、`/coyote`、`/settings` → 打 zip
+- **CI 对齐本地产物并补上质量门禁**：原工作流用 Nuitka（onefile）打包，与本地 `build_local.spec`（PyInstaller）
+  是两套产物；且不跑单元测试、不校验产物。现改为：跑单元测试 → 构建前端 → 用仓库自己的 spec 打包 →
+  校验体积与内嵌前端 chunk → **真的启动 exe 冒烟测试** `/health`、`/coyote`、`/settings` →
+  打 zip（与本地同布局）→ 仅 tag 时发 Release；Python/Node 版本也对齐到本地已验证的 3.13 / 22
 - **波形数据缺失不再导致程序起不来**：`load_patterns` 以前是裸 `open()`，`data/estim` 缺失/损坏会让 `Estim.__init__` 抛异常，而 `CoyoteInterface` 是模块级构造的 —— 表现为「双击 exe 没有任何窗口、38080 无监听」。现在缺失的波形文件会被跳过并告警，且 `default` 波形内置在代码里，程序始终能启动
 - **本机请求绕过系统代理**：`urllib` 默认读取系统代理，健康检查与**退出时的优雅停机**（把设备功率归零并断开蓝牙）都可能被代理打断。现在这两处都使用显式禁用代理的 opener
 - **退出时设备功率归零更可靠**：见上一条，这一步关系到「关窗后设备是否还在输出」

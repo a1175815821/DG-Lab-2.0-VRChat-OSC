@@ -1,0 +1,15 @@
+# 测试依赖（跑 tests/ 需要，普通用户/仅运行程序不需要装）。
+#
+# 关键一条：fastapi 的 TestClient 依赖 httpx（starlette 的 testclient 模块会
+# import 它），而它不在运行时闭包里。之前没有声明，结果 CI 上「跑单元测试」
+# 直接 RuntimeError: The starlette.testclient module requires the httpx2 package
+# —— 65 个用例在 CI 里一次都没跑起来过。
+#
+# 用法：
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   python -m unittest tests.test_coyote -v
+-r requirements.txt
+
+httpx==0.28.1
+httpcore==1.0.9
+certifi==2025.11.12

@@ -34,11 +34,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # 运行时依赖 + 打包工具（PyInstaller）分开装，避免把开发工具混进运行时环境
+      # 运行时依赖 + 测试依赖 + 打包工具分开装，避免把开发工具混进运行时环境。
+      # 注意 requirements-dev.txt 是必须的：TestClient 依赖 httpx，它不在运行时闭包里，
+      # 少了它「跑单元测试」会直接 RuntimeError。
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install -r requirements-dev.txt
           pip install -r requirements-build.txt
 
       # 单元测试必须在打包之前跑：B21（引导页 ReferenceError）当年就是 lint 全绿、

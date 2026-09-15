@@ -904,21 +904,73 @@ class TestConnectBudget(unittest.TestCase):
 
 
 class TestApiFallbackReturnsJson(unittest.TestCase):
-    """回归 B33-8：未命中的 /api/* 必须返回 JSON，而不是 HTML 404 页面。"""
+    """未命中的 /api/* 必须返回 JSON 而不是 HTML 404；SPA 回退要把 /coyote 映射到 coyote.html。
 
-    def test_unknown_api_returns_json_detail(self):
+    这里刻意自己造一份临时的 frontend/out，而不是用真实的构建产物：
+    frontend/out 是 .gitignore 的构建输出，CI 上「跑单元测试」排在「构建前端」之前，
+    依赖真实产物会让这个用例在 CI 上必然 404 —— 实测就是这么挂的（本地因为
+    目录一直在，永远发现不了）。真实产物是否可服务由 CI 的 exe 冒烟测试覆盖。
+    """
+
+    def setUp(self):
         import main
 
-        client = TestClient(main.app)
-        r = client.get("/api/coyote/does_not_exist")
+        self.main = main
+        self.tmp = tempfile.mkdtemp()
+        out = os.path.join(self.tmp, "frontend", "out")
+        os.makedirs(os.path.join(out, "assets"), exist_ok=True)
+        for name in ("index.html", "coyote.html", "404.html"):
+            with open(os.path.join(out, name), "w", encoding="utf-8") as f:
+                f.write(f"<html><body>{name}</body></html>")
+        with open(os.path.join(out, "assets", "logo.svg"), "w", encoding="utf-8") as f:
+            f.write("<svg/>")
+        self.out = out
+        self._old_frontend_dir = main.FRONTEND_DIR
+        main.FRONTEND_DIR = out
+
+    def tearDown(self):
+        self.main.FRONTEND_DIR = self._old_frontend_dir
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _client(self):
+        return TestClient(self.main.app)
+
+    def test_unknown_api_returns_json_detail(self):
+        r = self._client().get("/api/coyote/does_not_exist")
         self.assertEqual(r.status_code, 404)
         self.assertIn("detail", r.json())
 
-    def test_spa_fallback_still_serves_pages(self):
-        import main
+    def test_spa_fallback_maps_page_to_html(self):
+        r = self._client().get("/coyote")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("coyote.html", r.text)
 
-        client = TestClient(main.app)
-        self.assertEqual(client.get("/coyote").status_code, 200)
+    def test_spa_fallback_serves_index_for_root(self):
+        r = self._client().get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("index.html", r.text)
+
+    def test_spa_fallback_serves_real_file(self):
+        r = self._client().get("/assets/logo.svg")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("<svg/>", r.text)
+
+    def test_unknown_path_falls_back_to_404_page(self):
+        r = self._client().get("/definitely-not-a-page")
+        self.assertEqual(r.status_code, 404)
+        self.assertIn("404.html", r.text)
+
+    def test_real_frontend_dir_is_served_when_built(self):
+        """前端已构建时（本机 / CI 构建之后），真实产物也要能服务。"""
+        real = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "frontend", "out")
+        if not os.path.isfile(os.path.join(real, "index.html")):
+            self.skipTest("frontend/out 尚未构建")
+        self.main.FRONTEND_DIR = real
+        try:
+            self.assertEqual(self._client().get("/coyote").status_code, 200)
+        finally:
+            self.main.FRONTEND_DIR = self.out
 
 
 class TestPatternLoadingResilience(unittest.TestCase):

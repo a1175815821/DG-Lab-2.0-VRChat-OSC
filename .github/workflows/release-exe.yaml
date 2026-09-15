@@ -44,18 +44,20 @@ jobs:
           pip install -r requirements-dev.txt
           pip install -r requirements-build.txt
 
-      # 单元测试必须在打包之前跑：B21（引导页 ReferenceError）当年就是 lint 全绿、
-      # 无测试拦截，直接流进了发布产物。
-      - name: Run unit tests
-        run: python -m unittest tests.test_coyote -v
-
-      # 前端必须在打包之前构建：main.py 依赖 frontend/out 提供界面
+      # 前端必须在打包之前构建（main.py 依赖 frontend/out）。
+      # 也放在跑测试之前：有一条用例会验证「真实前端产物能被服务」，
+      # 没有构建产物时它会 skip，先构建就能在 CI 里真正跑到。
       - name: Build frontend
         working-directory: frontend
         run: |
           npm install
           npm run build
           npm run export
+
+      # 单元测试：B21（引导页 ReferenceError 导致白屏）、B33（概览页崩溃）、
+      # B34（后端死循环）这类回归全靠这一步拦截。
+      - name: Run unit tests
+        run: python -m unittest tests.test_coyote -v
 
       # 用仓库自己的 spec 打包，保证 CI 产物与本地 `python -m PyInstaller build_local.spec` 一致
       - name: Build exe (PyInstaller)

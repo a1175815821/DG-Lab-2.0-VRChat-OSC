@@ -314,6 +314,13 @@ PyInstaller 打包 → 校验体积与内嵌前端 → 启动 exe 冒烟测试�
 - **侧边栏强度不再误清另一通道**：两个滑块初值都是 0，而保存接口是「同时提交 A 和 B」。首次同步完成前若只改一个通道，会把另一个通道写成 0。现在会等配置同步完成再允许保存
 - **日志不再刷屏**：每个窗口周期的 `set_pwm` 与逐条 avatar 扫描日志降到 debug（打包版带控制台窗口，Windows 控制台 I/O 会明显拖慢主循环）。需要时用 `OSC_TOYS_LOG_LEVEL=DEBUG` 打开
 - **打包 spec 清理**：移除 3 个指向不存在模块的 `hiddenimports`（`uvicorn.workers` 依赖未安装的 gunicorn、`pythonosc.handler`、`common.util`），避免噪音警告掩盖真正的缺模块
+- **打包 spec 排除项补全，本地构建不再比 CI 多 8MB**：开发机上装了项目用不到的
+  `cryptography` / `bcrypt` / `werkzeug` / `itsdangerous` / `rich` / `pygments` / `tzdata` 时，
+  PyInstaller 会顺着 hook 与元数据把它们收进包（实测 `cryptography` + `libcrypto-3.dll` +
+  `libssl-3.dll` + `bcrypt` 合计约 15MB）。另外标准库 `logging.handlers.NTEventLogHandler`
+  里的 `import win32evtlogutil, win32evtlog` 会把装了 pywin32 的开发机上的 pywin32 一起拖进来。
+  结果本地产物 27.4MB、CI 干净环境 19.7MB。现已全部排除，两边体积一致（约 19–20MB），
+  体积这个健康指标才重新有意义
 - **侧边栏「服务器错误提示」由假功能变真功能**：`serverError` 状态一直在统计连续失败次数，却从未被渲染 —— 后端挂了用户在侧边栏看不到任何线索。现在会显示「无法连接到后端服务，强度设置可能未生效」
 - **死代码清理**：移除未使用的 import / 变量（前端 18 处、后端 2 处）、
   `dg_encoding.test_function_validity()`（依赖仓库里并不存在的 `fuzzy_*_data.json`，永远跑不起来）、

@@ -65,6 +65,7 @@ jobs:
 
       # 产物完整性校验：体积异常通常意味着构建损坏（曾出现 95MB 的损坏产物：
       # python313.dll 载荷坏了、进程起不来），或把 PyQt5/matplotlib 等无关重库打了进去。
+      # 干净环境下的正常体积约 19-20MB（Python 3.13 + PyInstaller 6.19）。
       - name: Verify artifact
         shell: pwsh
         run: |
@@ -72,8 +73,8 @@ jobs:
           if (-not (Test-Path $exe)) { throw "未生成 $exe" }
           $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
           Write-Host "osc-toys.exe = $mb MB"
-          if ($mb -lt 10 -or $mb -gt 60) {
-            throw "体积异常（$mb MB）：预期 20-40 MB。过大通常是打包进了无关重库，过小通常是构建损坏。"
+          if ($mb -lt 15 -or $mb -gt 40) {
+            throw "体积异常（$mb MB）：预期 15-40 MB（干净环境约 19-20MB）。过大通常是打包进了无关重库（例如开发机装了 pywin32 会被 logging.handlers 的惰性 import 拖进来），过小通常是构建损坏。"
           }
           # 用字节读取再转 ASCII 搜索：Select-String 读二进制文件不可靠
           $chunk = (Select-String -Path "frontend/out/index.html" -Pattern "_app-[a-z0-9]+\.js" -AllMatches).Matches[0].Value

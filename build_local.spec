@@ -29,6 +29,22 @@ a = Analysis(
         'matplotlib', 'IPython', 'numpy', 'pandas', 'scipy', 'cv2', 'PIL',
         'webview.platforms.qt', 'webview.platforms.gtk', 'webview.platforms.cocoa',
         'webview.platforms.cef',
+        # pywin32：本项目、pywebview 的 Windows 后端（winforms/win32/edgechromium
+        # 只用 clr + ctypes + winreg）都没有用到它。但标准库
+        # logging.handlers.NTEventLogHandler.__init__ 里有一句
+        # `import win32evtlogutil, win32evtlog`，PyInstaller 的静态分析会顺着它
+        # 把 pywin32 拖进来 —— 只要开发机装了 pywin32，产物就多出 win32api.pyd /
+        # pywintypes313.dll（实测约 0.3MB，虽小但会让体积随开发机环境漂移）。
+        'win32api', 'win32con', 'win32evtlog', 'win32evtlogutil', 'win32file',
+        'win32gui', 'win32process', 'win32security', 'win32service',
+        'win32serviceutil', 'win32trace', 'win32traceutil', 'win32ui',
+        'pythoncom', 'pywintypes', 'win32com', 'win32comext', 'Pythonwin', 'pywin',
+        # 下面这些本项目一个都没用到，但开发机上装了就会被 PyInstaller 的 hook
+        # 顺着元数据收进来（实测：cryptography + libcrypto-3.dll + libssl-3.dll +
+        # bcrypt 合计 ~15MB，另加 werkzeug/itsdangerous/rich/pygments/tzdata）。
+        # 排除后本地产物才与 CI 干净环境的产物一致（19-20MB）。
+        'cryptography', 'bcrypt', 'werkzeug', 'itsdangerous', 'rich',
+        'pygments', 'tzdata', 'pydoc_data',
     ],
     hiddenimports=[
         # uvicorn 子模块

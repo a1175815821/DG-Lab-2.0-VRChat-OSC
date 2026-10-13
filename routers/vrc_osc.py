@@ -148,11 +148,26 @@ async def list_avatars() -> Dict[str, Any]:
     # 每次打开「自动获取」弹窗都会调用本接口，本机 avatar 可能几十个；
     # 用 info 会往控制台刷几十行，降到 debug。
     logging.debug("vrc_osc: 扫描到 %s 个 avatar, tracked_avatar=%s", len(avatars), tracked_avatar)
+    # 运行时追踪优先：tracked_avatar 命中列表中的某一个时，不再按 mtime 猜。
+    # 否则只标记 mtime 最大的**一个** —— VRChat 批量写配置文件时多个文件
+    # 常落在同一秒，旧代码用 `== newest_time` 会把它们全部标记为当前模型，
+    # 前端 `avatars.find(a => a.is_current)` 命中哪个全看扫描顺序。
+    tracked_found = False
+    if tracked_avatar:
+        for a in avatars:
+            if a["id"] == tracked_avatar:
+                a["is_current"] = True
+                tracked_found = True
+            else:
+                a["is_current"] = False
+    if not tracked_found:
+        for a in avatars:
+            a["is_current"] = False
+        for a in avatars:
+            if a["_mtime"] == newest_time:
+                a["is_current"] = True
+                break
     for a in avatars:
-        if tracked_avatar and a["id"] == tracked_avatar:
-            a["is_current"] = True
-        else:
-            a["is_current"] = a["_mtime"] == newest_time
         logging.debug("  avatar: %s (id=%s, is_current=%s)", a["name"], a["id"], a["is_current"])
         del a["_mtime"]
 

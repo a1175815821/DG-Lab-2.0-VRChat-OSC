@@ -164,6 +164,36 @@ class CoyoteInterface(Estim):
     # Internal methods
     #
 
+    def ble_link_alive(self) -> bool:
+        """底层蓝牙链路是否还活着。
+
+        `is_connected` 是应用层标志：signal()/is_running() 判定写入/读取失败
+        时会把它置 False，但那一刻并没有断开蓝牙、也没有归零功率。此时
+        stop()/disconnect() 若只认这个标志就会直接返回，用户点「断开并停止」
+        也救不了还在输出的设备。bleak 的 `device.is_connected` 反映真实链路，
+       拿它做第二判据。
+        """
+        try:
+            return bool(self.device is not None and self.device.is_connected)
+        except Exception:
+            return False
+
+    async def _emergency_zero_and_disconnect(self):
+        """BLE 出错后的收尾：尽最大努力归零功率并断开蓝牙。
+
+        两步都包 try：此刻链路大概率已经不可用，失败只能记录，不能把异常
+        再抛回调用方（调用方多在事件循环回调里，抛出只会变成一条无人读的
+        task 异常）。
+        """
+        try:
+            await self.set_pwm(0, 0)
+        except Exception as e:
+            logging.warning(f"断开前归零功率失败: {e}")
+        try:
+            await self.disconnect()
+        except Exception as e:
+            logging.warning(f"断开蓝牙失败: {e}")
+
     async def set_pwm(self, pow_a: int, pow_b: int):
         """
         Set power level of channel a and channel b
@@ -429,16 +459,25 @@ class CoyoteInterface(Estim):
 
     async def disconnect(self):
         """Disconnect device."""
-        if not self.is_connected:
+        # 标志位可能是异常路径残留的 False，但底层链路还活着 —— 这种情况
+        # 也必须真正断开，否则 BleakClient 成孤儿，重连时旧连接占用蓝牙栈。
+        if not self.is_connected and not self.ble_link_alive():
             return
 
         logging.info("Disconnecting...")
         self.stop_signal = True
         self.is_connected = False
-        output = await self.device.disconnect()
+        try:
+            output = await self.device.disconnect()
+        except Exception as e:
+            # 链路已坏时断开必然失败：记录即可，不能让调用方（/stop）500
+            logging.warning(f"断开蓝牙出错: {e}")
 
-        if not self.device.is_connected:
-            logging.info("Disconnected!")
+        try:
+            if not self.device.is_connected:
+                logging.info("Disconnected!")
+        except Exception:
+            pass
 
     async def get_battery_level(self) -> int:
         """Get battery level."""
@@ -513,6 +552,24 @@ class CoyoteInterface(Estim):
             )
             states = self._resolve_states(pattern_name)
             if not states:
+                # 波形数据丢了（data/estim 被清理/杀软误删/文件损坏）：按 README
+                # 承诺的行为回退到内置 default，而不是静默停止输出 —— 后者会
+                # 表现为「连接成功、界面正常，但设备毫无反应」，且没有任何提示。
+                fallback = "default"
+                if pattern_name != fallback and self.patterns.get(fallback):
+                    logging.error(
+                        "波形 %r 没有可播放的数据，通道 %s 回退到 %s"
+                        "（请检查 data/estim 是否完整）",
+                        pattern_name, channel, fallback,
+                    )
+                    if channel == "a":
+                        self.pattern_name_a = fallback
+                        settings.coyote_pattern_a = fallback
+                    else:
+                        self.pattern_name_b = fallback
+                        settings.coyote_pattern_b = fallback
+                    settings.dump()
+                    continue
                 logging.error(
                     "波形 %r 没有可播放的数据，通道 %s 停止输出"
                     "（请检查 settings.yaml 的 coyote_pattern_%s 与 data/estim 是否完整）",
@@ -556,6 +613,10 @@ class CoyoteInterface(Estim):
                 except Exception as e:
                     logging.error(f"BLE 写入失败，判定设备已断开: {e}")
                     self.is_connected, self.stop_signal = False, True
+                    # 只翻标志位不够：链路若还活着，设备会按最后一次的功率/波形
+                    # 继续输出，而 /stop 随后只会返回 "not started"（空操作），
+                    # BleakClient 也会变成孤儿连接。这里补上归零 + 断开。
+                    await self._emergency_zero_and_disconnect()
                     return
                 last_time = time.time()
 
@@ -576,6 +637,8 @@ class CoyoteInterface(Estim):
         except Exception as e:
             logging.error(f"{e}\n设备已断开，需手动重连")
             self.is_connected, self.stop_signal = False, True
+            # 同 signal() 的写入失败路径：归零 + 断开，不能只翻标志位
+            await self._emergency_zero_and_disconnect()
             return False
         # If power is 0, stop() has been called outside this function.
         # TODO: Need a better way to check if the device is still running.
@@ -590,7 +653,14 @@ class CoyoteInterface(Estim):
 
         todo: Interrupt-based stop command.
         """
-        if not self.is_connected:
+        # 同 disconnect()：is_connected 可能被异常路径置 False 而链路还活着，
+        # 那时也必须把功率归零，否则设备继续输出而界面显示「未连接」。
+        if not self.is_connected and not self.ble_link_alive():
             return
         self.stop_signal = True
-        await self.set_pwm(0, 0)
+        try:
+            await self.set_pwm(0, 0)
+        except Exception as e:
+            # 链路已坏时归零必然失败：记录后照常返回，让 /stop 能继续走
+            # disconnect 流程，而不是把「停止」按钮变成 500。
+            logging.warning(f"stop() 归零功率失败: {e}")

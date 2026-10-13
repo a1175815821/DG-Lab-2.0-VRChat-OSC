@@ -117,6 +117,21 @@ class Settings(BaseModel):
             with open(path, "r") as f:
                 return yaml.safe_load(f)
 
+    def _normalize_unsafe_host(self):
+        """vrc_host 为「所有网卡」时强制回本机。
+
+        OSC 是电刺激设备的控制面：监听 0.0.0.0/:: 意味着同网段任意主机都能
+        驱动设备。API 层已拒绝（osc_server._validate_host），但用户手改
+        settings.yaml 也要兜底 —— 启动时静默监听所有网卡是最危险的情况。
+        """
+        if (self.vrc_host or "").strip() in ("", "0.0.0.0", "::", "::0"):
+            if self.vrc_host != "127.0.0.1":
+                logging.warning(
+                    "settings.yaml 的 vrc_host=%r 会监听所有网卡，已强制改为 127.0.0.1（仅本机）",
+                    self.vrc_host,
+                )
+            self.vrc_host = "127.0.0.1"
+
     @classmethod
     def load(cls):
         user_yaml = os.path.join(USER_DATA_DIR, "settings.yaml")
@@ -160,7 +175,7 @@ class Settings(BaseModel):
             return cls()
 
         try:
-            return cls(**settings_dict)
+            instance = cls(**settings_dict)
         except Exception as e:
             # 字段类型错误等校验失败，同样回落默认值而不是崩溃
             logging.error(
@@ -168,6 +183,9 @@ class Settings(BaseModel):
             )
             cls._backup_broken(user_yaml)
             return cls()
+
+        instance._normalize_unsafe_host()
+        return instance
 
 
 settings = Settings.load()

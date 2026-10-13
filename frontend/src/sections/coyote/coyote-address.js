@@ -38,7 +38,17 @@ export const CoyoteOSCAddress = () => {
   const [pickingFor, setPickingFor] = useState('a');
 
   const updateOscAddress = () => {
-    const data = { "addr_a": oscAddressA, "addr_b": oscAddressB };
+    // 后端允许单个地址留空（表示不绑定该通道），但两个同时为空时
+    // dispatcher 没有任何映射 —— 保存会返回成功，设备却永远收不到信号。
+    // 引导页（StepOscAddress）一直有这道检查，主页面补上，行为保持一致。
+    const a = (oscAddressA || '').trim();
+    const b = (oscAddressB || '').trim();
+    if (!a && !b) {
+      setMessage('A/B 通道 OSC 地址不能同时为空（至少绑定一个地址）');
+      setOpenError(true);
+      return;
+    }
+    const data = { "addr_a": a, "addr_b": b };
     axios.post('/api/coyote/osc_addr', data).then(() => {
       setOpenSuccess(true);
     }).catch((err) => {

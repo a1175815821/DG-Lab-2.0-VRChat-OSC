@@ -261,7 +261,24 @@ PyInstaller 打包 → 校验体积与内嵌前端 → 启动 exe 冒烟测试�
 
 ## 版本历史
 
-### v3.2.0 (当前)
+### v3.3.0 (当前)
+
+第四轮全项目审查修复（B65–B75），重点解决「设备状态机漏洞 / 边界值崩溃 / 失败路径不留痕」：
+
+- **NaN OSC 参数导致强度输出永久冻结修复**：`_coerce_signal` 现在用 `math.isfinite` 拦掉 NaN/Inf。此前一个 NaN 包进入滑动窗口后，`int(max_power × nan)` 抛 `ValueError`，且抛点在清空队列**之前** —— 队列被永久污染，之后所有正常信号都算不出功率，只能重启程序（实测复现）；Inf 则会被 `map_signal` 当成满档信号，设备瞬间拉满强度上限
+- **Inf/NaN 不再破坏实时监控**：非有限值此前会进入消息历史，`json.dumps` 产出 `NaN`/`Infinity` 字面量，浏览器 `JSON.parse` 抛 `SyntaxError` 被 catch 吞掉 —— SSE 实时监控静默停更且无任何提示。与上一条同根修复
+- **BLE 写入/读取失败后设备收尾**：`signal()`/`is_running()` 判定设备断开时，此前只把 `is_connected` 置 False 就返回 —— 不归零功率、不断开蓝牙。链路若还活着，设备会按最后一次的功率/波形继续输出，而用户点「断开并停止」只会收到 `not started`（空操作），BleakClient 也会变成孤儿连接。现在失败路径会尽最大努力 `set_pwm(0,0)` + `disconnect()`，`stop()`/`disconnect()` 增加 `ble_link_alive()` 第二判据（标志位残留 False 但链路活着时也真正执行）
+- **强度下发异常不再静默**：OSC handler 用 `ensure_future(ci.set_pwm(...))` 异步下发强度，此前无人 await 也无回调 —— BLE 写失败时只会在 GC 时留下一行 'Task exception was never retrieved'，表现为「界面显示已连接、强度却不变」。现在统一走 `_schedule_set_pwm()`，异常必然记入日志
+- **自动扫描到的设备 UID 现在会写回 settings**：uid 留空自动连接成功后，此前 `settings.coyote_uid` 仍是空串 —— `/status`、`/aggregate_status` 显示空 uid，且下次连接还要重新扫描（≥10 秒）
+- **OSC 监听地址热改失败不再落盘**：`/api/osc_server/address` 此前先 `dump()` 再 `serve_osc()`，绑定失败时新地址已写进 settings.yaml 而监听还是旧的 —— 重启后 OSC 启动即失败（彻底收不到信号），且本次会话内保存 A/B 通道 OSC 地址也会因反复重绑失败地址全部 500（实测级联）。现在先绑成功再落盘，失败仅内存回滚
+- **波形数据丢失时回退默认波形**：`data/estim` 被清理/误删后，此前 `signal()` 直接返回且 `is_connected` 保持 True —— 表现为「连接成功、界面正常，设备毫无反应」，除控制台一行日志外无任何提示。现在按文档承诺的行为回退到内置 `default` 波形并持久化
+- **监听主机校验**：`/api/osc_server/address` 拒绝 `0.0.0.0`/`::`（所有网卡）—— OSC 是电刺激设备的控制面，监听所有网卡意味着局域网内任意主机都能驱动设备；手改 settings.yaml 也有启动兜底（强制改回 127.0.0.1）
+- **两个 OSC 地址同时为空时主页面拦截**：此前引导页有检查而 Coyote 页没有，清空两个地址保存会返回成功，但 dispatcher 没有任何映射，设备永远收不到信号
+- **avatar「当前模型」标记修复**：多个 avatar 配置文件修改时间落在同一秒时，此前会被全部标记为当前模型，前端 `find(is_current)` 命中哪个全看扫描顺序
+- **文档更正**：FAQ 此前的回答暗示「手改 settings.yaml 会生效」，实际文件只在启动时读取一次，现明确说明必须重启
+- 单元测试 73 → **96 例**（新增 23 条回归：NaN/Inf 拦阻与队列防污染、BLE 失败归零+断开、`/stop` 假断开态、强度下发异常日志、UID 回写、OSC 地址回滚与级联恢复、host 校验、波形回退、is_current 并列、危险 host 启动纠正）
+
+### v3.2.0
 
 第三轮全项目审查修复，重点解决「功能实际不可用 / 假功能 / 界面崩溃」：
 
@@ -407,7 +424,7 @@ A: 确保设备指示灯不是白色（白色为配对模式）。尝试重启�
 A: 请先在 VRChat 中切换到目标 avatar 至少一次，让 VRC 生成 OSC 配置 json。同时确认 VRChat 设置中 OSC 已启用。
 
 **Q: 改了 `settings.yaml` 没生效？**
-A: OSC 地址修改支持热更新，无需断开设备。其他配置改完会自动持久化。如果打包版 exe 的 settings.yaml 在 exe 同目录，修改后会自动保存。
+A: `settings.yaml` 只在程序**启动时读取一次**，改完必须重启程序才会生效（运行中没有任何热加载机制）。界面上的设置（OSC 地址、强度上限、安全模式、波形）修改后立即生效并自动持久化，无需重启。打包版 exe 的 settings.yaml 位于 exe 同目录，首次运行会自动释放，之后的修改都保存到该文件。
 
 **Q: 深色模式不跟随系统？**
 A: 首次访问会跟随系统，之后以手动选择为准（保存在 localStorage）。清除浏览器/应用缓存可重置。

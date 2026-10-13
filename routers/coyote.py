@@ -1,5 +1,6 @@
 from collections import deque
 import json
+import math
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -96,11 +97,20 @@ def _coerce_signal(value) -> Optional[float]:
     Bool 或字符串参数。以前这里直接 round(raw, 4)：遇到字符串会抛 TypeError，
     于是 ① OSC handler 每次收包都崩 ② latest_raw_* 已被赋成字符串，
     概览页 `value.toFixed(3)` 直接 TypeError，整个界面被 ErrorBoundary 接管。
+
+    NaN / Inf 同样必须拦掉（OSC float32 可以承载 IEEE754 非有限值）：
+    - NaN 进入滑动窗口后，`int(max_power × map_signal(nan) × mult)` 抛
+      ValueError，且抛点在清空队列之前 → 队列被永久污染，之后所有正常
+      信号都算不出功率，只能重启（实测：一个 NaN 包后强度输出永久冻结）；
+    - Inf 会被 map_signal 当成满档信号 → 设备瞬间拉满强度上限；
+    - 两者进入 msg_history 后 json.dumps 产出 `NaN`/`Infinity` 字面量，
+      浏览器 JSON.parse 抛 SyntaxError → SSE 实时监控静默停更。
     """
     if isinstance(value, bool):
         return 1.0 if value else 0.0
     if isinstance(value, (int, float)):
-        return float(value)
+        v = float(value)
+        return v if math.isfinite(v) else None
     return None
 
 
@@ -108,15 +118,18 @@ _unexpected_signal_warned: set = set()
 
 
 def _warn_unexpected_signal(ch: str, value) -> None:
-    """非数值信号只提示一次，避免刷屏。"""
+    """非数值/非有限信号只提示一次，避免刷屏。"""
     key = (ch, type(value).__name__)
     if key in _unexpected_signal_warned:
         return
     _unexpected_signal_warned.add(key)
+    if isinstance(value, float) and not math.isfinite(value):
+        hint = "请确认参数来源没有产生 NaN/Inf（例如除零、未初始化变量）"
+    else:
+        hint = "请确认绑定的地址是 Float 类型参数"
     logging.warning(
-        "通道 %s 收到非数值 OSC 参数（%s: %r），已忽略。"
-        "请确认绑定的地址是 Float 类型参数。",
-        ch, type(value).__name__, value,
+        "通道 %s 收到非数值 OSC 参数（%s: %r），已忽略。%s",
+        ch, type(value).__name__, value, hint,
     )
 
 
@@ -187,6 +200,27 @@ def map_signal(s: float) -> float:
     return (s - settings.min_limit) / span * (1 - settings.min_power) + settings.min_power
 
 
+def _log_set_pwm_error(task: asyncio.Task):
+    """异步下发强度的 task 异常必须有人取。
+
+    OSC handler 跑在事件循环线程里，不能 await BLE 写（会阻塞后续收包），
+    只能 ensure_future。但没人 await 的 task 一旦抛异常，只会在 GC 时留下一行
+    'Task exception was never retrieved' —— 表现为「界面显示已连接、强度却
+    不变」，用户毫无线索。这里统一记录原因。
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logging.warning("强度下发失败（设备可能已断开或写接口异常）: %s", exc)
+
+
+def _schedule_set_pwm(pow_a: int, pow_b: int) -> None:
+    """把强度下发排进事件循环，并保证异常被记录。"""
+    task = asyncio.ensure_future(ci.set_pwm(pow_a, pow_b), loop=asyncio.get_event_loop())
+    task.add_done_callback(_log_set_pwm_error)
+
+
 def coyote_handler_a(addr, args, dis):
     """处理 A 通道 OSC 信号。记录原始值、历史，设备连接时按窗口输出功率。"""
     global param_queue_a, last_time_a, cur_time_a, latest_raw_a, latest_avg_a, latest_mapped_a
@@ -225,16 +259,14 @@ def coyote_handler_a(addr, args, dis):
         # 区间都会被误判为断电。
         if raw_avg < settings.start_limit:
             latest_mapped_a = 0.0
-            asyncio.ensure_future(ci.set_pwm(0, -1), loop=asyncio.get_event_loop())
+            _schedule_set_pwm(0, -1)
         else:
             latest_mapped_a = s
             # power = max_power × mapped_signal × multiplier（默认 multiplier=1.0，滑块 1:1）
             # 安全模式下强制裁剪到 100，避免 multiplier 导致越界
             safe_limit = 100 if settings.coyote_safe_mode else 200
             power = min(safe_limit, int(settings.coyote_max_power_a * s * settings.coyote_multiplier))
-            asyncio.ensure_future(
-                ci.set_pwm(power, -1), loop=asyncio.get_event_loop()
-            )
+            _schedule_set_pwm(power, -1)
         param_queue_a = []
     else:
         param_queue_a.append(value)
@@ -271,14 +303,12 @@ def coyote_handler_b(addr, args, dis):
         # 同 A 通道：与 start_limit 比较的是原始信号，不是映射后的功率比例
         if raw_avg < settings.start_limit:
             latest_mapped_b = 0.0
-            asyncio.ensure_future(ci.set_pwm(-1, 0), loop=asyncio.get_event_loop())
+            _schedule_set_pwm(-1, 0)
         else:
             latest_mapped_b = s
             safe_limit = 100 if settings.coyote_safe_mode else 200
             power = min(safe_limit, int(settings.coyote_max_power_b * s * settings.coyote_multiplier))
-            asyncio.ensure_future(
-                ci.set_pwm(-1, power), loop=asyncio.get_event_loop()
-            )
+            _schedule_set_pwm(-1, power)
         param_queue_b = []
     else:
         param_queue_b.append(value)
@@ -467,6 +497,15 @@ async def start_coyote(req: StartRequest):
         _connect_task = None
         _connect_cancel_event = None
 
+    # 连接成功后把「实际连接的设备地址」写回 settings。
+    # uid 留空时走自动扫描：search_for_device() 只把找到的地址写进
+    # ci.device_uid，settings.coyote_uid 仍是空 —— 于是 /status、
+    # /aggregate_status 显示空 uid，且下次连接还要重新扫一遍（≥10 秒）。
+    if ci.device_uid and settings.coyote_uid != ci.device_uid:
+        settings.coyote_uid = ci.device_uid
+        if not settings.dump():
+            logging.warning("设备 UID 未能写入 settings.yaml，下次连接将重新扫描")
+
     # 只启动信号输出，OSC 监听已在应用启动时独立运行
     _signal_task = asyncio.create_task(start_signal_output())
     _signal_task.add_done_callback(_log_signal_task_error)
@@ -509,7 +548,10 @@ async def stop_coyote():
         _connect_task = None
         _connect_cancel_event = None
         return {"msg": "stopping"}
-    if ci is None or not ci.is_connected:
+    # is_connected 可能是异常路径残留的 False（BLE 写入/读取失败时只翻了标志位），
+    # 但底层链路还活着、设备可能还在输出。这种情况也必须放行，让 stop()/
+    # disconnect() 走「归零 + 断开」，否则用户点「断开并停止」毫无作用。
+    if ci is None or (not ci.is_connected and not ci.ble_link_alive()):
         return {"msg": "not started"}
     if _signal_task is not None:
         _signal_task.cancel()

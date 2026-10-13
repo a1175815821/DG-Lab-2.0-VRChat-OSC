@@ -16,6 +16,7 @@
 import asyncio
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -25,7 +26,7 @@ import threading
 import time
 import unittest
 import urllib.request
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -1168,6 +1169,557 @@ class TestConsoleEncodingResilience(unittest.TestCase):
             if re.search(r"(?<![\w.])print\s*\(", code):
                 offenders.append(f"L{i}: {line.strip()}")
         self.assertEqual(offenders, [], f"settings.py 不应出现 print()：{offenders}")
+
+
+# ─── 第四轮修复的回归测试 ───────────────────────────────────────────────
+
+
+class _FlakyBleDevice:
+    """记录所有 BLE 写/断开调用的假设备。is_connected=True 表示链路还活着。"""
+
+    def __init__(self, write_raises=False):
+        self.write_raises = write_raises
+        self.writes = []
+        self.disconnected = False
+        self.is_connected = True
+
+    async def write_gatt_char(self, *args, **kwargs):
+        # 两种调用风格：set_pwm 传 (uuid, message)，signal 循环传 (characteristic, message)
+        # 统一记录最后一个参数（消息体）
+        self.writes.append(args[-1] if args else None)
+        if self.write_raises:
+            raise ConnectionError("write boom")
+        return None
+
+    async def read_gatt_char(self, *args, **kwargs):
+        return b"\x00\x00\x00"
+
+    async def disconnect(self):
+        self.disconnected = True
+        self.is_connected = False
+
+
+class TestNonFiniteOscSignal(unittest.TestCase):
+    """回归：NaN/Inf OSC 参数必须被 _coerce_signal 拦掉。
+
+    实测（修复前）：一个 NaN 包进入 param_queue 后，`int(max_power × nan)` 抛
+    ValueError，且抛点在清空队列之前 → 队列被永久污染，之后所有正常信号都
+    算不出功率，只能重启；Inf 则被 map_signal 当成满档 → 瞬间拉满强度。
+    """
+
+    def setUp(self):
+        self._old = (
+            coyote.latest_raw_a, list(coyote.msg_history), coyote.cur_time_a,
+            list(coyote.param_queue_a), coyote.last_time_a,
+            settings.can_update_power, coyote.ci,
+        )
+
+    def tearDown(self):
+        (coyote.latest_raw_a, hist, coyote.cur_time_a, queue,
+         coyote.last_time_a, settings.can_update_power, coyote.ci) = self._old
+        coyote.msg_history.clear()
+        coyote.msg_history.extend(hist)
+        coyote.param_queue_a[:] = queue
+        settings.can_update_power = True
+
+    def test_coerce_rejects_non_finite(self):
+        self.assertIsNone(coyote._coerce_signal(float("nan")))
+        self.assertIsNone(coyote._coerce_signal(float("inf")))
+        self.assertIsNone(coyote._coerce_signal(float("-inf")))
+
+    def test_nan_does_not_pollute_state(self):
+        coyote.latest_raw_a = 0.25
+        before_hist = len(coyote.msg_history)
+        coyote.coyote_handler_a("/avatar/parameters/EarLDis", "A", float("nan"))
+        self.assertEqual(coyote.latest_raw_a, 0.25, "NaN 不得污染 latest_raw_a")
+        self.assertEqual(len(coyote.msg_history), before_hist, "NaN 不得写入历史")
+        self.assertEqual(len(coyote.param_queue_a), 0, "NaN 不得入队")
+        self.assertIsNotNone(coyote.cur_time_a, "仍应标记「收到过消息」")
+
+    def test_inf_does_not_pollute_state(self):
+        coyote.latest_raw_a = 0.25
+        before_hist = len(coyote.msg_history)
+        coyote.coyote_handler_a("/avatar/parameters/EarLDis", "A", float("inf"))
+        self.assertEqual(coyote.latest_raw_a, 0.25)
+        self.assertEqual(len(coyote.msg_history), before_hist)
+        self.assertEqual(len(coyote.param_queue_a), 0)
+
+    def test_nan_does_not_poison_queue_with_device_connected(self):
+        """已连接设备：NaN 之后紧跟正常值，也必须能正常算出功率。"""
+        ci = CoyoteInterface(device_uid="", power_multiplier=1.0, safe_mode=True)
+        ci.is_connected = True
+        ci.pow_a = 0
+        ci.pow_b = 0
+        ci._pwm_a34 = object()
+        ci._pwm_ab2 = type("C", (), {"uuid": "ab"})()
+        ci.device = _FlakyBleDevice()
+        coyote.ci = ci
+
+        async def scenario():
+            coyote.param_queue_a[:] = []
+            coyote.last_time_a = time.time() - 1.0  # 窗口已过
+            settings.can_update_power = True
+            # 修复前：第一个 NaN 入队，第二个正常值触发 int(nan) → ValueError
+            coyote.coyote_handler_a("/avatar/parameters/EarLDis", "A", float("nan"))
+            coyote.coyote_handler_a("/avatar/parameters/EarLDis", "A", 0.9)
+            await asyncio.sleep(0.05)
+
+        asyncio.run(scenario())
+        self.assertTrue(
+            all(math.isfinite(v) for v in coyote.param_queue_a),
+            f"队列被非有限值污染: {coyote.param_queue_a}",
+        )
+        self.assertEqual(coyote.latest_raw_a, 0.9)
+
+    def test_sse_payload_has_no_non_finite_literals(self):
+        """进 history 的值必须全是有限值，否则 json.dumps 产出 NaN/Infinity
+        字面量，浏览器 JSON.parse 抛 SyntaxError → 实时监控静默停更。"""
+        coyote.coyote_handler_a("/avatar/parameters/EarLDis", "A", 0.5)
+        dumped = json.dumps(coyote._build_monitor_payload())
+        self.assertNotIn("NaN", dumped)
+        self.assertNotIn("Infinity", dumped)
+
+
+class TestBleFailureRecovery(unittest.TestCase):
+    """回归：BLE 写/读失败后必须归零功率并断开，/stop 不能变成空操作。"""
+
+    def _make_ci(self, pow_a=50):
+        ci = CoyoteInterface(device_uid="", power_multiplier=1.0, safe_mode=True)
+        ci.patterns = {"test": [[10, 90, 10]]}
+        ci.pattern_name_a = "test"
+        ci.pattern_name_b = "test"
+        ci._pwm_a34 = object()
+        ci._pwm_ab2 = type("C", (), {"uuid": "ab"})()
+        ci.is_connected = True
+        ci.pow_a = pow_a
+        ci.pow_b = 0
+        return ci
+
+    def test_signal_write_failure_zeros_and_disconnects(self):
+        ci = self._make_ci(pow_a=50)
+        dev = _FlakyBleDevice(write_raises=True)
+        ci.device = dev
+
+        # power=50 与当前 pow_a 相等 → 初始 set_pwm 早退不写，
+        # 进入波形循环后第一次写才失败，正好走到 emergency 收尾。
+        asyncio.run(ci.signal(power=50, pattern_name="test", duration=500, channel="a"))
+
+        self.assertFalse(ci.is_connected)
+        self.assertTrue(ci.stop_signal)
+        self.assertGreaterEqual(
+            len(dev.writes), 2,
+            "失败后还必须尝试归零（写 0），不能只翻标志位就返回",
+        )
+        self.assertEqual(dev.writes[-1], b"\x00\x00\x00", "最后一次写必须是归零")
+        self.assertTrue(dev.disconnected, "失败后必须断开蓝牙，不能留孤儿连接")
+
+    def test_is_running_failure_zeros_and_disconnects(self):
+        ci = self._make_ci(pow_a=60)
+
+        class ReadFlakyDevice(_FlakyBleDevice):
+            async def read_gatt_char(self, *args, **kwargs):
+                raise ConnectionError("read boom")
+
+        dev = ReadFlakyDevice()
+        ci.device = dev
+        result = asyncio.run(ci.is_running())
+        self.assertFalse(result)
+        self.assertFalse(ci.is_connected)
+        self.assertEqual(dev.writes[-1], b"\x00\x00\x00", "读失败也要尝试归零")
+        self.assertTrue(dev.disconnected)
+
+    def test_stop_works_when_flag_stale_but_link_alive(self):
+        """is_connected 被异常路径置 False 但链路还活着时，/stop 必须真的
+        归零 + 断开（修复前直接返回 "not started"，设备继续输出）。"""
+        ci = self._make_ci(pow_a=60)
+        ci.is_connected = False  # 异常路径残留
+        dev = _FlakyBleDevice()
+        ci.device = dev
+
+        app = FastAPI()
+        app.include_router(coyote.router)
+        client = TestClient(app)
+        old_ci, old_task = coyote.ci, coyote._signal_task
+        coyote.ci = ci
+        coyote._signal_task = None
+        try:
+            r = client.get("/api/coyote/stop")
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.json()["msg"], "stopping")
+            self.assertEqual(dev.writes[-1], b"\x00\x00\x00", "必须归零")
+            self.assertTrue(dev.disconnected, "必须断开")
+        finally:
+            coyote.ci = old_ci
+            coyote._signal_task = old_task
+
+    def test_stop_still_noop_when_nothing_connected(self):
+        """真的什么都没连接时保持 "not started"，不会误触 BLE。"""
+        ci = self._make_ci()
+        ci.is_connected = False
+        dev = _FlakyBleDevice()
+        dev.is_connected = False
+        ci.device = dev
+
+        app = FastAPI()
+        app.include_router(coyote.router)
+        client = TestClient(app)
+        old_ci, old_task = coyote.ci, coyote._signal_task
+        coyote.ci = ci
+        coyote._signal_task = None
+        try:
+            r = client.get("/api/coyote/stop")
+            self.assertEqual(r.json()["msg"], "not started")
+            self.assertEqual(dev.writes, [])
+            self.assertFalse(dev.disconnected)
+        finally:
+            coyote.ci = old_ci
+            coyote._signal_task = old_task
+
+
+class TestScheduleSetPwmFailureLogged(unittest.TestCase):
+    """回归：OSC handler 的异步强度下发，异常必须被记录。
+
+    修复前 ensure_future 无人 await 也无回调，BLE 写失败时只会在 GC 时留下
+    一行 'Task exception was never retrieved' —— 界面显示已连接、强度不变。
+    """
+
+    def setUp(self):
+        self._old = (
+            coyote.latest_raw_a, coyote.param_queue_a, coyote.last_time_a,
+            coyote.cur_time_a, settings.can_update_power, coyote.ci,
+        )
+
+    def tearDown(self):
+        (coyote.latest_raw_a, coyote.param_queue_a, coyote.last_time_a,
+         coyote.cur_time_a, settings.can_update_power, coyote.ci) = self._old
+        settings.can_update_power = True
+
+    def test_write_failure_is_logged_not_swallowed(self):
+        ci = CoyoteInterface(device_uid="", power_multiplier=1.0, safe_mode=True)
+        ci.is_connected = True
+        ci.pow_a = 0
+        ci.pow_b = 0
+        ci._pwm_ab2 = type("C", (), {"uuid": "ab"})()
+        ci.device = _FlakyBleDevice(write_raises=True)
+        coyote.ci = ci
+
+        async def scenario():
+            coyote.param_queue_a[:] = [0.9]
+            coyote.last_time_a = time.time() - 1.0
+            settings.can_update_power = True
+            with self.assertLogs(level="WARNING") as cm:
+                coyote.coyote_handler_a("/avatar/parameters/EarLDis", "A", 0.95)
+                for _ in range(5):
+                    await asyncio.sleep(0.05)
+            return cm.output
+
+        logs = asyncio.run(scenario())
+        self.assertTrue(
+            any("强度下发失败" in line for line in logs),
+            f"强度下发异常必须被记录，实际日志: {logs}",
+        )
+
+
+class TestUidWriteBack(unittest.TestCase):
+    """回归：uid 留空自动扫描连接成功后，必须把找到的地址写回 settings。
+
+    修复前 /status、/aggregate_status 显示空 uid，且每次重连都要重新扫描。
+    """
+
+    def test_auto_scanned_uid_is_written_back(self):
+        class FakeConnectCI:
+            def __init__(self, device_uid="", power_multiplier=1.0, safe_mode=True):
+                self.device_uid = "AA:BB:CC:DD:EE:FF"
+                self.device = object()  # 非 None → 跳过扫描
+                self.is_connected = False
+                self.pow_a = 0
+                self.pow_b = 0
+
+            async def connect(self, retries=3):
+                self.is_connected = True
+
+            async def signal(self, **kwargs):
+                return None
+
+        app = FastAPI()
+        app.include_router(coyote.router)
+        client = TestClient(app)
+        old_ci, old_task = coyote.ci, coyote._signal_task
+        old_uid = settings.coyote_uid
+        coyote.ci = FakeConnectCI()
+        coyote._signal_task = None
+        try:
+            with patch.object(coyote, "CoyoteInterface", FakeConnectCI), \
+                 patch.object(Settings, "dump", return_value=True) as dump_mock:
+                r = client.post("/api/coyote/start", json={"uid": ""})
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual(
+                settings.coyote_uid, "AA:BB:CC:DD:EE:FF",
+                "自动扫描到的设备地址必须写回 settings.coyote_uid",
+            )
+            self.assertGreaterEqual(dump_mock.call_count, 2, "写回后必须持久化")
+        finally:
+            coyote.ci = old_ci
+            coyote._signal_task = old_task
+            settings.coyote_uid = old_uid
+
+
+class TestOscAddressRollback(unittest.TestCase):
+    """回归：OSC 监听地址热改失败时，settings 必须回滚且旧监听保留。
+
+    修复前先 dump 后 bind：失败时新地址已落盘而监听还是旧的 → 重启后 OSC
+    彻底不工作，且本次会话内 /osc_addr 也会因反复重绑失败地址全部 500。
+    """
+
+    def test_failed_update_rolls_back_and_keeps_old_transport(self):
+        import routers.osc_server as osc_server_router
+
+        app = FastAPI()
+        app.include_router(osc_server_router.router)
+        app.include_router(coyote.router)
+        client = TestClient(app)
+
+        old = (coyote.transport, coyote._osc_protocol, coyote._last_osc_bind,
+               coyote.osc_last_error, settings.vrc_host, settings.vrc_osc_port,
+               settings.coyote_addr_a, settings.coyote_addr_b)
+
+        class FakeTransport:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        class FakeProto:
+            def __init__(self):
+                self.dispatcher = None
+
+        fake = FakeTransport()
+        try:
+            coyote.transport = fake
+            coyote._osc_protocol = FakeProto()
+            coyote._last_osc_bind = ("127.0.0.1", 9001)
+            coyote.osc_last_error = None
+            settings.vrc_host = "127.0.0.1"
+            settings.vrc_osc_port = 9001
+
+            async def always_fail(host, port, dispatcher):
+                raise OSError("bind failed")
+
+            with patch.object(coyote, "_bind_osc", side_effect=always_fail), \
+                 patch.object(Settings, "dump", return_value=True) as dump_mock:
+                r = client.post(
+                    "/api/osc_server/address",
+                    json={"host": "127.0.0.1", "port": 9123},
+                )
+                self.assertEqual(r.status_code, 500)
+                self.assertEqual(settings.vrc_osc_port, 9001, "失败后 settings 必须回滚")
+                self.assertIs(coyote.transport, fake, "旧监听必须保留")
+                self.assertFalse(fake.closed, "旧监听不应被关闭")
+                dump_mock.assert_not_called(), "绑定失败不得把新地址落盘"
+
+                # 级联修复验证：随后保存 A/B 通道 OSC 地址应恢复正常（走 path一）
+                # 注意：必须留在 patch 里，否则真实的 settings.dump() 会把
+                # 测试地址写进项目根目录的 settings.yaml（dev 模式 USER_DATA_DIR）。
+                r2 = client.post(
+                    "/api/coyote/osc_addr",
+                    json={"addr_a": "/avatar/parameters/XL", "addr_b": "/avatar/parameters/XR"},
+                )
+                self.assertEqual(r2.status_code, 200, "修复后 /osc_addr 不应再被牵连")
+        finally:
+            (coyote.transport, coyote._osc_protocol, coyote._last_osc_bind,
+             coyote.osc_last_error, settings.vrc_host, settings.vrc_osc_port,
+             settings.coyote_addr_a, settings.coyote_addr_b) = old
+
+
+class TestHostValidation(unittest.TestCase):
+    """回归：监听主机不允许空值与「所有网卡」（OSC 是设备的控制面）。"""
+
+    def _client(self):
+        import routers.osc_server as osc_server_router
+
+        app = FastAPI()
+        app.include_router(osc_server_router.router)
+        return TestClient(app), osc_server_router
+
+    def test_all_interfaces_host_rejected(self):
+        client, mod = self._client()
+        with patch.object(mod, "serve_osc", AsyncMock()) as serve:
+            r = client.post("/api/osc_server/address", json={"host": "0.0.0.0", "port": 9001})
+        self.assertEqual(r.status_code, 422)
+        serve.assert_not_called()
+
+    def test_ipv6_all_interfaces_rejected(self):
+        client, mod = self._client()
+        with patch.object(mod, "serve_osc", AsyncMock()) as serve:
+            r = client.post("/api/osc_server/address", json={"host": "::", "port": 9001})
+        self.assertEqual(r.status_code, 422)
+        serve.assert_not_called()
+
+    def test_host_with_space_rejected(self):
+        client, mod = self._client()
+        with patch.object(mod, "serve_osc", AsyncMock()) as serve:
+            r = client.post("/api/osc_server/address", json={"host": "bad host", "port": 9001})
+        self.assertEqual(r.status_code, 422)
+        serve.assert_not_called()
+
+    def test_loopback_accepted(self):
+        client, mod = self._client()
+        old_host, old_port = settings.vrc_host, settings.vrc_osc_port
+        try:
+            with patch.object(mod, "serve_osc", AsyncMock()) as serve, \
+                 patch.object(Settings, "dump", return_value=True):
+                r = client.post("/api/osc_server/address", json={"host": "127.0.0.1", "port": 9001})
+            self.assertEqual(r.status_code, 200)
+            serve.assert_awaited_once()
+            self.assertEqual(settings.vrc_host, "127.0.0.1")
+        finally:
+            settings.vrc_host, settings.vrc_osc_port = old_host, old_port
+
+
+class TestPatternFallback(unittest.TestCase):
+    """回归：配置的波形数据丢失时回退内置 default（README 承诺的行为）。
+
+    修复前 signal() 直接 return 且 is_connected 保持 True —— 表现为
+    「连接成功、界面正常，设备毫无反应」，与控制台一行日志之外无任何提示。
+    """
+
+    def setUp(self):
+        self._old_pattern_a = settings.coyote_pattern_a
+
+    def tearDown(self):
+        settings.coyote_pattern_a = self._old_pattern_a
+        settings.can_update_power = True
+
+    def test_missing_pattern_falls_back_to_default(self):
+        ci = CoyoteInterface(device_uid="", power_multiplier=1.0, safe_mode=True)
+        ci.patterns = {"default": [[10, 90, 10]]}  # 只有内置 default 幸存
+        ci.pattern_name_a = "vibrator_4"           # settings 指向已丢失的波形
+        ci._pwm_a34 = object()
+        ci._pwm_ab2 = type("C", (), {"uuid": "ab"})()
+        ci.is_connected = True
+        ci.pow_a = 0
+        ci.pow_b = 0
+        dev = _FlakyBleDevice()
+        ci.device = dev
+        settings.coyote_pattern_a = "vibrator_4"
+
+        with patch.object(Settings, "dump", return_value=True):
+            asyncio.run(ci.signal(power=0, pattern_name="vibrator_4", duration=300, channel="a"))
+
+        self.assertEqual(ci.pattern_name_a, "default", "必须回退到 default")
+        self.assertEqual(settings.coyote_pattern_a, "default", "回退必须持久化")
+        self.assertGreater(len(dev.writes), 0, "回退后必须继续输出，不能静默停")
+
+    def test_missing_pattern_without_default_still_stops(self):
+        """default 也丢了（极端情况）：保持原有「停止输出」行为，不能死循环。"""
+        ci = CoyoteInterface(device_uid="", power_multiplier=1.0, safe_mode=True)
+        ci.patterns = {}
+        ci.pattern_name_a = "gone"
+        ci._pwm_a34 = object()
+        ci._pwm_ab2 = type("C", (), {"uuid": "ab"})()
+        ci.is_connected = True
+        ci.pow_a = 0
+        ci.pow_b = 0
+        dev = _FlakyBleDevice()
+        ci.device = dev
+
+        done = {}
+
+        def run():
+            asyncio.run(ci.signal(power=0, pattern_name="gone", duration=100000, channel="a"))
+            done["ok"] = True
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        t.join(timeout=3.0)
+        self.assertTrue(done.get("ok"), "没有可用波形时必须返回，不能空转")
+        self.assertEqual(dev.writes, [])
+
+
+class TestVrcIsCurrentTie(unittest.TestCase):
+    """回归：多个 avatar 配置 mtime 同一秒时只标记一个 is_current。"""
+
+    def _run_list(self, tmp, tracked):
+        import routers.vrc_osc as vrc_osc
+
+        app = FastAPI()
+        app.include_router(vrc_osc.router)
+        client = TestClient(app)
+        old_dir = vrc_osc._get_current_user_dir
+        old_tracked = coyote.current_vrc_avatar_id
+        vrc_osc._get_current_user_dir = lambda: tmp
+        coyote.current_vrc_avatar_id = tracked
+        try:
+            return client.get("/api/vrc/avatars").json()["avatars"]
+        finally:
+            vrc_osc._get_current_user_dir = old_dir
+            coyote.current_vrc_avatar_id = old_tracked
+
+    def test_same_mtime_marks_single_current(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            for aid in ("avtr_aaa", "avtr_bbb", "avtr_ccc"):
+                with open(os.path.join(tmp, f"{aid}.json"), "w", encoding="utf-8") as f:
+                    json.dump({"id": aid, "name": aid, "parameters": []}, f)
+            stamp = time.time() - 100
+            for fn in os.listdir(tmp):
+                os.utime(os.path.join(tmp, fn), (stamp, stamp))
+            avatars = self._run_list(tmp, tracked=None)
+            currents = [a for a in avatars if a["is_current"]]
+            self.assertEqual(len(avatars), 3)
+            self.assertEqual(len(currents), 1, "mtime 并列时只应有一个 is_current")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_tracked_avatar_wins_over_mtime(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            for aid in ("avtr_aaa", "avtr_bbb"):
+                with open(os.path.join(tmp, f"{aid}.json"), "w", encoding="utf-8") as f:
+                    json.dump({"id": aid, "name": aid, "parameters": []}, f)
+            stamp = time.time() - 100
+            for fn in os.listdir(tmp):
+                os.utime(os.path.join(tmp, fn), (stamp, stamp))
+            avatars = self._run_list(tmp, tracked="avtr_bbb")
+            currents = [a for a in avatars if a["is_current"]]
+            self.assertEqual([a["id"] for a in currents], ["avtr_bbb"])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class TestUnsafeHostNormalization(unittest.TestCase):
+    """回归：手改 settings.yaml 的 vrc_host 为「所有网卡」时启动即纠正。"""
+
+    def _write(self, text):
+        tmp = tempfile.mkdtemp()
+        with open(os.path.join(tmp, "settings.yaml"), "w", encoding="utf-8") as f:
+            f.write(text)
+        return tmp
+
+    def test_all_interfaces_host_normalized_on_load(self):
+        tmp = self._write("vrc_host: 0.0.0.0\n")
+        try:
+            with patch.object(settings_module, "USER_DATA_DIR", tmp):
+                self.assertEqual(Settings.load().vrc_host, "127.0.0.1")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_empty_host_normalized_on_load(self):
+        tmp = self._write("vrc_host: ''\n")
+        try:
+            with patch.object(settings_module, "USER_DATA_DIR", tmp):
+                self.assertEqual(Settings.load().vrc_host, "127.0.0.1")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_loopback_host_untouched(self):
+        tmp = self._write("vrc_host: 127.0.0.1\n")
+        try:
+            with patch.object(settings_module, "USER_DATA_DIR", tmp):
+                self.assertEqual(Settings.load().vrc_host, "127.0.0.1")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
